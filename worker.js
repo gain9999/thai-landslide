@@ -8,6 +8,7 @@
 let W = 1080, H = 1800;
 let slopeArr, lithArr, pgaArr, maskArr, p99Arr, thaiArr;
 let treeOffsets, splitIdx, splitCond, leftArr, rightArr, baseLogit = 0;
+let lastProb = null, lastParams = null;
 
 // Gradient colour stops for probability p: [p, r, g, b]. Colours are
 // sampled exactly from NASA's Global Landslide Susceptibility legend
@@ -70,14 +71,49 @@ self.onmessage = function (e) {
     self.postMessage({ type: 'ready' });
     return;
   }
+  if (d.type === 'viewport') {
+    // Stats for the cells currently on screen only. The main thread
+    // sends the map's lng/lat bounds; the worker counts from the last
+    // computed probability grid, applying the same slope filter and
+    // display threshold as the full-map stats. No model re-run needed.
+    if (!lastProb || !lastParams) return;
+    const b = d.bounds;
+    const x0 = Math.max(0, Math.floor((b.west - 97) / 9 * W));
+    const x1 = Math.min(W - 1, Math.ceil((b.east - 97) / 9 * W) - 1);
+    const y0 = Math.max(0, Math.floor((20.5 - b.north) / 15 * H));
+    const y1 = Math.min(H - 1, Math.ceil((20.5 - b.south) / 15 * H) - 1);
+    let shown = 0, above50 = 0, above90 = 0, sum = 0, maxP = 0;
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = y * W + x;
+        if (!maskArr[i]) continue;
+        const slope = lastParams.override ? lastParams.slopeOv : slopeArr[i];
+        if (lastParams.slopeFilter && slope <= 10) continue;
+        const prob = lastProb[i];
+        if (prob < lastParams.minP) continue;
+        shown++; sum += prob; if (prob > maxP) maxP = prob;
+        if (prob >= 0.5) above50++;
+        if (prob >= 0.9) above90++;
+      }
+    }
+    self.postMessage({
+      type: 'viewportStats',
+      stats: { shown, above50, above90, mean: shown ? sum / shown : 0, max: maxP }
+    });
+    return;
+  }
   if (d.type === 'compute') {
     const p = d.params;
+    lastParams = p;
+    lastProb = new Float32Array(W * H);
     const out = new Uint8ClampedArray(W * H * 4);
     let shown = 0, above50 = 0, above90 = 0, sum = 0, maxP = 0;
     const feat = new Float32Array(6);
     const nTrees = treeOffsets.length - 1;
     for (let i = 0; i < W * H; i++) {
-      if (!maskArr[i] || !thaiArr[i]) continue;
+      // All land cells in the cropped box, not just Thailand — the
+      // Thailand mask (thaiArr) is no longer a filter here.
+      if (!maskArr[i]) continue;
       const slope = p.override ? p.slopeOv : slopeArr[i];
       if (p.slopeFilter && slope <= 10) continue;
       const lith = p.override ? p.lithOv : lithArr[i];
@@ -102,6 +138,7 @@ self.onmessage = function (e) {
         void end;
       }
       const prob = 1 / (1 + Math.exp(-(baseLogit + totalW)));
+      lastProb[i] = prob;
       if (prob < p.minP) continue;
       const c = colour(prob);
       const o = i * 4;
