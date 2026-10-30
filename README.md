@@ -1,14 +1,15 @@
 # thai-landslide
 
-Thailand landslide probability, computed entirely in the browser with the NASA LHASA 2.1.1 XGBoost model. No backend, no live data feed.
+Thailand landslide probability, computed entirely in the browser with the NASA LHASA 2.1.1 XGBoost model, over an OpenFreeMap basemap. No backend, no live data feed.
 
 Live site: https://gain9999.github.io/thai-landslide/
 
 ## What it does
 
+- Basemap: OpenFreeMap vector positron via MapLibre GL JS 4.7.1 (keyless, https://tiles.openfreemap.org/styles/positron).
 - Loads the Thailand static layers at their original 30-arcsecond (~1 km) resolution: 1080 × 1800 cells over 97–106°E, 5.5–20.5°N.
-- Runs all 300 XGBoost trees in a Web Worker for every land cell, every time a slider moves.
-- Colours cells by probability (0.1 yellow → 0.9+ dark red). Cells below the display threshold, sea cells, and (by default) slopes ≤ 10° are left uncoloured.
+- Runs all 300 XGBoost trees in a Web Worker for every land cell, every time a slider moves, and draws the result as a transparent canvas overlay positioned with MapLibre's `project()` on every move/zoom — so the basemap's streets, labels and borders stay visible wherever probability is not coloured.
+- Colours cells by probability (0.1 yellow → 0.9+ dark red). Cells below the display threshold, sea cells, outside-Thailand cells, and (by default) slopes ≤ 10° are left transparent, showing the basemap underneath.
 
 ## Sliders — all model inputs
 
@@ -50,7 +51,7 @@ Total site is about 2.8 MB. Layers are PNGs, read back through canvas:
 | `layers/mask.png` | 8-bit, 255 = land | exact |
 | `layers/thai.png` | 8-bit, 255 = inside the GADM Thailand outline (627,555 cells) | exact |
 
-`outline.json` is the GADM v4.1 Thailand level-0 outline, simplified to 0.01°.
+`layers/thai.png` was derived from the GADM v4.1 Thailand level-0 outline, simplified to 0.01°. The page no longer draws the outline itself — country borders come from the OpenFreeMap basemap.
 
 ## What this is not
 
@@ -71,6 +72,7 @@ A plain `file://` open will fail on the Web Worker; use a local server.
 
 - NASA LHASA: https://github.com/nasa/LHASA (v2.1.1)
 - LHASA static data package (static.zip, 2024-08-07): Slope, Lithology, PGA, mask, p99
+- Basemap: OpenFreeMap, https://openfreemap.org (© OpenMapTiles, © OpenStreetMap contributors)
 - Outline: GADM v4.1, https://gadm.org/
 
 Independent client-side build. Not an official NASA product.

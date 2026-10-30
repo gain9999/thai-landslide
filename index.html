@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
 <title>Thailand Landslide Probability — LHASA XGBoost, in your browser</title>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f4f4; color: #222; }
@@ -12,10 +14,9 @@
   header p { margin: 0; font-size: 13px; color: #cbd6e2; line-height: 1.4; }
   #status { padding: 8px 16px; font-size: 13px; background: #fff3cd; color: #664d03; }
   #status.ok { background: #d1e7dd; color: #0f5132; }
-  #mapWrap { position: relative; width: 100%; aspect-ratio: 1080 / 1800; overflow: hidden; background: #cfe0ee; touch-action: none; }
-  #mapCanvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; cursor: crosshair; }
-  #zoomBar { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 2; }
-  #zoomBar button { width: 38px; height: 38px; font-size: 20px; border: 1px solid #999; border-radius: 8px; background: rgba(255,255,255,.92); cursor: pointer; }
+  #map { position: relative; width: 100%; height: 72vh; min-height: 480px; }
+  #probCanvas { position: absolute; z-index: 1; pointer-events: none; }
+  #resetView { position: absolute; left: 10px; top: 10px; z-index: 2; padding: 8px 12px; font-size: 13px; border: 1px solid #999; border-radius: 8px; background: rgba(255,255,255,.92); cursor: pointer; }
   #legend { display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 12px; background: #fff; border-bottom: 1px solid #ddd; flex-wrap: wrap; }
   #legend .bar { flex: 1; min-width: 140px; height: 12px; border-radius: 6px; background: linear-gradient(90deg, #fee08b, #fdae61, #f46d43, #d73027, #7f0000); }
   #stats { padding: 10px 16px; font-size: 13px; background: #fff; border-bottom: 1px solid #ddd; line-height: 1.5; }
@@ -41,16 +42,12 @@
 <body>
 <header>
   <h1>Thailand landslide probability</h1>
-  <p>NASA LHASA 2.1.1 XGBoost model, running entirely in your browser. Move the sliders — the map recomputes. No live data: rain, antecedent rain and soil moisture are scenario values you set.</p>
+  <p>NASA LHASA 2.1.1 XGBoost model, running entirely in your browser, over an OpenFreeMap basemap. Move the sliders — the map recomputes. No live data: rain, antecedent rain and soil moisture are scenario values you set.</p>
 </header>
-<div id="status">Loading terrain layers and model…</div>
-<div id="mapWrap">
-  <canvas id="mapCanvas" width="1080" height="1800"></canvas>
-  <div id="zoomBar">
-    <button id="zoomIn" aria-label="Zoom in">+</button>
-    <button id="zoomOut" aria-label="Zoom out">−</button>
-    <button id="zoomReset" aria-label="Reset view">⟲</button>
-  </div>
+<div id="status">Loading basemap, terrain layers and model…</div>
+<div id="map">
+  <canvas id="probCanvas" width="1080" height="1800"></canvas>
+  <button id="resetView">Reset view</button>
 </div>
 <div id="legend"><span>Probability</span><div class="bar"></div><span>0.1 &nbsp; 0.5 &nbsp; 0.9+</span></div>
 <div id="stats">—</div>
@@ -118,29 +115,28 @@
   <summary>How to read this, and what it is not</summary>
   <p>Each coloured cell is the LHASA XGBoost probability that a rainfall-triggered landslide occurs in that ~1 km cell on a day with the slider conditions. It is a model output, not a measured frequency for that hillside, and not a flood forecast. The model saturates near 1 under extreme sliders — that is what the model says, not a claim that a landslide is certain.</p>
   <p>Inputs, in model order: Lithology, Slope, PGA, soil moisture (gwetprof), antecedent rain, rain ÷ p99. Static layers are the 30-arcsecond (~1 km) LHASA static files, clipped to 97–106°E, 5.5–20.5°N (1080 × 1800 cells). Dynamic inputs here are scenario sliders, not live IMERG/SMAP data — a live version would still need a daily feed for those three.</p>
-  <p>Tap or click any cell to see its real terrain values, p99, rain ratio and probability. Drag to pan, pinch or use +/− to zoom.</p>
+  <p>Tap or click any cell to see its real terrain values, p99, rain ratio and probability. Drag to pan, pinch or use the +/− control to zoom.</p>
 </details>
 
 <footer>
+  Basemap: <a href="https://openfreemap.org">OpenFreeMap</a> vector positron, © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, © OpenMapTiles.
   Model: NASA LHASA v2.1.1, XGBoost, 300 depth-2 trees, binary logistic, base score 0.1246 (used as logit). Converted to a 45 KB stripped JSON; traversal verified against the real XGBoost Booster in Python (max difference &lt; 4×10<sup>−7</sup>).
-  Static data: LHASA static.zip (Slope, Lithology, PGA, mask, p99), 2024-08-07 package. Outline: GADM v4.1 Thailand level 0, simplified to 0.01°.
+  Static data: LHASA static.zip (Slope, Lithology, PGA, mask, p99), 2024-08-07 package. Thailand outline for clipping: GADM v4.1 level 0, simplified to 0.01°.
   Sources: <a href="https://github.com/nasa/LHASA">github.com/nasa/LHASA</a>.
   This is an independent client-side build, not an official NASA product.
 </footer>
 
 <script>
 const W = 1080, H = 1800, LON0 = 97, LAT1 = 20.5;
-const canvas = document.getElementById('mapCanvas');
-const ctx = canvas.getContext('2d');
+const BOX = [[97, 5.5], [106, 20.5]];
+const probCanvas = document.getElementById('probCanvas');
+const probCtx = probCanvas.getContext('2d');
 const statusEl = document.getElementById('status');
 const statsEl = document.getElementById('stats');
 const inspectEl = document.getElementById('inspect');
-const bgCanvas = document.createElement('canvas'); bgCanvas.width = W; bgCanvas.height = H;
-const bgCtx = bgCanvas.getContext('2d');
-const ovCanvas = document.createElement('canvas'); ovCanvas.width = W; ovCanvas.height = H;
 
-let slopeArr, lithArr, pgaArr, maskArr, p99Arr, thaiArr, outline = null, worker = null, workerReady = false, modelData = null;
-let computeTimer = null, lastParams = null, view = { s: 1, tx: 0, ty: 0 };
+let slopeArr, lithArr, pgaArr, maskArr, p99Arr, thaiArr, worker = null, workerReady = false, modelData = null, map = null;
+let computeTimer = null, lastParams = null;
 
 function $(id) { return document.getElementById(id); }
 function params() {
@@ -167,34 +163,13 @@ function scheduleCompute() {
   clearTimeout(computeTimer);
   computeTimer = setTimeout(() => { lastParams = params(); worker.postMessage({ type: 'compute', params: lastParams }); }, 180);
 }
-function drawBackground() {
-  const img = bgCtx.createImageData(W, H), d = img.data;
-  for (let i = 0; i < W * H; i++) {
-    const o = i * 4;
-    if (maskArr[i]) { d[o] = 232; d[o + 1] = 232; d[o + 2] = 232; d[o + 3] = 255; }
-    else { d[o] = 207; d[o + 1] = 224; d[o + 2] = 238; d[o + 3] = 255; }
-  }
-  bgCtx.putImageData(img, 0, 0);
-}
-function drawOutline() {
-  if (!outline) return;
-  ctx.strokeStyle = 'rgba(40,40,40,0.85)'; ctx.lineWidth = 1.6; ctx.beginPath();
-  for (const poly of outline.coordinates) {
-    poly.forEach(([lon, lat], j) => {
-      const x = (lon - LON0) / 9 * W, y = (LAT1 - lat) / 15 * H;
-      if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    });
-    ctx.closePath();
-  }
-  ctx.stroke();
-}
-function renderOverlay(buf) {
-  ctx.clearRect(0, 0, W, H);
-  ctx.drawImage(bgCanvas, 0, 0);
-  const img = new ImageData(new Uint8ClampedArray(buf), W, H);
-  ovCanvas.getContext('2d').putImageData(img, 0, 0);
-  ctx.drawImage(ovCanvas, 0, 0);
-  drawOutline();
+function syncOverlay() {
+  if (!map) return;
+  const tl = map.project([97, 20.5]), br = map.project([106, 5.5]);
+  probCanvas.style.left = tl.x + 'px';
+  probCanvas.style.top = tl.y + 'px';
+  probCanvas.style.width = (br.x - tl.x) + 'px';
+  probCanvas.style.height = (br.y - tl.y) + 'px';
 }
 async function loadPng(path) {
   return new Promise((resolve, reject) => {
@@ -208,11 +183,34 @@ async function loadPng(path) {
   });
 }
 async function init() {
+  if (typeof maplibregl === 'undefined') {
+    statusEl.textContent = 'MapLibre failed to load (CDN blocked?). The basemap needs unpkg.com — check connection and reload.';
+    return;
+  }
+  map = new maplibregl.Map({
+    container: 'map',
+    style: 'https://tiles.openfreemap.org/styles/positron',
+    center: [100.9, 14.2],
+    zoom: 5.5,
+    maxBounds: [[95, 3], [108, 22]],
+    minZoom: 4,
+    maxZoom: 12,
+    dragRotate: false,
+    touchPitch: false,
+    pitchWithRotate: false
+  });
+  map.addControl(new maplibregl.NavigationControl(), 'top-right');
+  map.on('load', () => { map.fitBounds(BOX, { padding: 20, duration: 0 }); syncOverlay(); });
+  map.on('move', syncOverlay);
+  map.on('zoom', syncOverlay);
+  map.on('resize', syncOverlay);
+  map.on('click', (e) => inspectAt(e.lngLat.lng, e.lngLat.lat));
+  $('resetView').addEventListener('click', () => map.fitBounds(BOX, { padding: 20, duration: 500 }));
   try {
-    const [slopePx, lithPx, pgaPx, maskPx, p99Px, thaiPx, model, outlineJson] = await Promise.all([
+    const [slopePx, lithPx, pgaPx, maskPx, p99Px, thaiPx, model] = await Promise.all([
       loadPng('layers/slope.png'), loadPng('layers/lith.png'), loadPng('layers/pga.png'),
       loadPng('layers/mask.png'), loadPng('layers/p99.png'), loadPng('layers/thai.png'),
-      fetch('model.json').then(r => r.json()), fetch('outline.json').then(r => r.json())
+      fetch('model.json').then(r => r.json())
     ]);
     const n = W * H;
     slopeArr = new Float32Array(n); lithArr = new Float32Array(n); pgaArr = new Float32Array(n);
@@ -225,14 +223,14 @@ async function init() {
       p99Arr[i] = (p99Px[o] << 8) | p99Px[o + 1];
       thaiArr[i] = thaiPx[o] > 0 ? 1 : 0;
     }
-    outline = outlineJson;
     modelData = model;
-    drawBackground();
     worker = new Worker('worker.js');
     worker.onmessage = (e) => {
       if (e.data.type === 'ready') { workerReady = true; statusEl.textContent = 'Ready — drag to pan, tap a cell to inspect.'; statusEl.className = 'ok'; scheduleCompute(); }
       if (e.data.type === 'result') {
-        renderOverlay(e.data.image);
+        const img = new ImageData(new Uint8ClampedArray(e.data.image), W, H);
+        probCtx.putImageData(img, 0, 0);
+        syncOverlay();
         const s = e.data.stats;
         statsEl.textContent = 'Thailand cells shown: ' + s.shown.toLocaleString() +
           ' · p ≥ 0.5: ' + s.above50.toLocaleString() + ' (' + (s.shown ? (100 * s.above50 / s.shown).toFixed(1) : '0') + '%)' +
@@ -273,48 +271,11 @@ $('resetBtn').addEventListener('click', () => {
   scheduleCompute();
 });
 
-// Pan / zoom / tap inspect
-function applyView() { canvas.style.transform = 'translate(' + view.tx + 'px,' + view.ty + 'px) scale(' + view.s + ')'; }
-function zoomAt(cx, cy, factor) {
-  const r = canvas.getBoundingClientRect();
-  const nx = (cx - r.left) / r.width, ny = (cy - r.top) / r.height;
-  const ns = Math.min(6, Math.max(1, view.s * factor));
-  view.s = ns; applyView();
-  // keep the point under the cursor roughly stable by recentring via scroll? (container is overflow hidden, so just clamp)
-  void nx; void ny;
-}
-$('zoomIn').addEventListener('click', () => { view.s = Math.min(6, view.s * 1.4); applyView(); });
-$('zoomOut').addEventListener('click', () => { view.s = Math.max(1, view.s / 1.4); if (view.s === 1) { view.tx = 0; view.ty = 0; } applyView(); });
-$('zoomReset').addEventListener('click', () => { view = { s: 1, tx: 0, ty: 0 }; applyView(); });
-const wrap = $('mapWrap');
-let pointers = new Map(), dragStart = null, moved = 0, lastPinch = 0;
-wrap.addEventListener('pointerdown', (e) => { pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); dragStart = { x: e.clientX, y: e.clientY }; moved = 0; if (pointers.size === 2) { const pts = [...pointers.values()]; lastPinch = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y); } });
-wrap.addEventListener('pointermove', (e) => {
-  if (!pointers.has(e.pointerId)) return;
-  const prev = pointers.get(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  moved += Math.abs(e.clientX - prev.x) + Math.abs(e.clientY - prev.y);
-  if (pointers.size === 1 && view.s > 1) { view.tx += e.clientX - prev.x; view.ty += e.clientY - prev.y; applyView(); }
-  if (pointers.size === 2) {
-    const pts = [...pointers.values()]; const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-    if (lastPinch > 0) { view.s = Math.min(6, Math.max(1, view.s * d / lastPinch)); if (view.s === 1) { view.tx = 0; view.ty = 0; } applyView(); }
-    lastPinch = d;
-  }
-});
-function endPointer(e) {
-  const wasTap = moved < 8 && pointers.size === 1;
-  pointers.delete(e.pointerId);
-  if (wasTap && slopeArr) inspectAt(e.clientX, e.clientY);
-}
-wrap.addEventListener('pointerup', endPointer);
-wrap.addEventListener('pointercancel', (e) => pointers.delete(e.pointerId));
-wrap.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.2 : 1 / 1.2); }, { passive: false });
-
-function inspectAt(clientX, clientY) {
-  const r = canvas.getBoundingClientRect();
-  const fx = (clientX - r.left) / r.width, fy = (clientY - r.top) / r.height;
-  if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
-  const x = Math.floor(fx * W), y = Math.floor(fy * H), i = y * W + x;
-  const lon = LON0 + (x + 0.5) / W * 9, lat = LAT1 - (y + 0.5) / H * 15;
+function inspectAt(lon, lat) {
+  if (!slopeArr) return;
+  const x = Math.floor((lon - LON0) / 9 * W), y = Math.floor((LAT1 - lat) / 15 * H);
+  if (x < 0 || x >= W || y < 0 || y >= H) return;
+  const i = y * W + x;
   const p = params();
   const slope = p.override ? p.slopeOv : slopeArr[i];
   const lith = p.override ? p.lithOv : lithArr[i];
