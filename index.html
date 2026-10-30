@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+<title>Thailand Landslide Probability — LHASA XGBoost, in your browser</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f4f4; color: #222; }
+  header { padding: 14px 16px 10px; background: #1a2a3a; color: #fff; }
+  header h1 { margin: 0 0 4px; font-size: 20px; line-height: 1.2; }
+  header p { margin: 0; font-size: 13px; color: #cbd6e2; line-height: 1.4; }
+  #status { padding: 8px 16px; font-size: 13px; background: #fff3cd; color: #664d03; }
+  #status.ok { background: #d1e7dd; color: #0f5132; }
+  #mapWrap { position: relative; width: 100%; aspect-ratio: 1080 / 1800; overflow: hidden; background: #cfe0ee; touch-action: none; }
+  #mapCanvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; cursor: crosshair; }
+  #zoomBar { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 2; }
+  #zoomBar button { width: 38px; height: 38px; font-size: 20px; border: 1px solid #999; border-radius: 8px; background: rgba(255,255,255,.92); cursor: pointer; }
+  #legend { display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 12px; background: #fff; border-bottom: 1px solid #ddd; flex-wrap: wrap; }
+  #legend .bar { flex: 1; min-width: 140px; height: 12px; border-radius: 6px; background: linear-gradient(90deg, #fee08b, #fdae61, #f46d43, #d73027, #7f0000); }
+  #stats { padding: 10px 16px; font-size: 13px; background: #fff; border-bottom: 1px solid #ddd; line-height: 1.5; }
+  #inspect { padding: 10px 16px; font-size: 13px; background: #eef4fb; border-bottom: 1px solid #ddd; line-height: 1.6; display: none; }
+  #inspect b { font-size: 15px; }
+  section { padding: 12px 16px; background: #fff; border-bottom: 1px solid #ddd; }
+  section h2 { margin: 0 0 10px; font-size: 15px; }
+  .ctl { margin: 0 0 14px; }
+  .ctl label { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 2px; }
+  .ctl label span { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .ctl input[type=range] { width: 100%; }
+  .ctl small { color: #666; font-size: 12px; }
+  .ctl input:disabled { opacity: .4; }
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .presets button, #resetBtn { padding: 8px 12px; font-size: 13px; border: 1px solid #1a2a3a; border-radius: 20px; background: #fff; cursor: pointer; }
+  .presets button:active, #resetBtn:active { background: #1a2a3a; color: #fff; }
+  details { padding: 12px 16px; background: #fff; font-size: 13px; line-height: 1.6; }
+  details summary { cursor: pointer; font-weight: 600; }
+  footer { padding: 12px 16px 28px; font-size: 12px; color: #666; line-height: 1.6; }
+  a { color: #1a5fb4; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Thailand landslide probability</h1>
+  <p>NASA LHASA 2.1.1 XGBoost model, running entirely in your browser. Move the sliders — the map recomputes. No live data: rain, antecedent rain and soil moisture are scenario values you set.</p>
+</header>
+<div id="status">Loading terrain layers and model…</div>
+<div id="mapWrap">
+  <canvas id="mapCanvas" width="1080" height="1800"></canvas>
+  <div id="zoomBar">
+    <button id="zoomIn" aria-label="Zoom in">+</button>
+    <button id="zoomOut" aria-label="Zoom out">−</button>
+    <button id="zoomReset" aria-label="Reset view">⟲</button>
+  </div>
+</div>
+<div id="legend"><span>Probability</span><div class="bar"></div><span>0.1 &nbsp; 0.5 &nbsp; 0.9+</span></div>
+<div id="stats">—</div>
+<div id="inspect"></div>
+
+<section>
+  <h2>Rain &amp; moisture — scenario sliders</h2>
+  <div class="ctl">
+    <label>Today's rain <span id="rainVal">117 mm</span></label>
+    <input type="range" id="rain" min="0" max="300" step="1" value="117">
+    <small>The model uses rain ÷ p99 for each cell (p99 = local 99th-percentile daily rain), not raw mm.</small>
+  </div>
+  <div class="ctl">
+    <label>Previous 2 days' rain (antecedent) <span id="anteVal">80 mm</span></label>
+    <input type="range" id="ante" min="0" max="400" step="1" value="80">
+  </div>
+  <div class="ctl">
+    <label>Soil moisture (SMAP profile wetness) <span id="gwetVal">75%</span></label>
+    <input type="range" id="gwet" min="0" max="100" step="1" value="75">
+    <small>0% = dry profile, 100% = saturated. Model value = % ÷ 100.</small>
+  </div>
+  <div class="presets">
+    <button data-preset="dry">Dry day</button>
+    <button data-preset="phuket">Phuket 26 Oct-like</button>
+    <button data-preset="monsoon">Wet monsoon</button>
+    <button data-preset="extreme">Extreme</button>
+    <button id="resetBtn">Reset</button>
+  </div>
+</section>
+
+<section>
+  <h2>Terrain — what-if override</h2>
+  <div class="ctl">
+    <label><span><input type="checkbox" id="override"> Override terrain with the sliders below</span><span></span></label>
+    <small>Off (default): every cell uses its real slope, lithology and PGA from the map. On: every cell uses the slider values instead, so you can test how sensitive the model is to terrain.</small>
+  </div>
+  <div class="ctl">
+    <label>Slope <span id="slopeOvVal">25°</span></label>
+    <input type="range" id="slopeOv" min="0" max="70" step="0.5" value="25" disabled>
+  </div>
+  <div class="ctl">
+    <label>Lithology code <span id="lithOvVal">4</span></label>
+    <input type="range" id="lithOv" min="0" max="7" step="1" value="4" disabled>
+    <small>Codes 0–7 from the LHASA lithology layer. The file carries no rock-type names, so codes are shown as-is.</small>
+  </div>
+  <div class="ctl">
+    <label>Peak ground acceleration (PGA) <span id="pgaOvVal">0.05 g</span></label>
+    <input type="range" id="pgaOv" min="0" max="0.5" step="0.01" value="0.05" disabled>
+  </div>
+</section>
+
+<section>
+  <h2>Display</h2>
+  <div class="ctl">
+    <label>Show only probability ≥ <span id="minPVal">0.10</span></label>
+    <input type="range" id="minP" min="0" max="1" step="0.05" value="0.10">
+    <small>Display filter only — not a model input.</small>
+  </div>
+  <div class="ctl">
+    <label><span><input type="checkbox" id="slopeFilter" checked> Hide slopes ≤ 10° (LHASA default)</span><span></span></label>
+  </div>
+</section>
+
+<details>
+  <summary>How to read this, and what it is not</summary>
+  <p>Each coloured cell is the LHASA XGBoost probability that a rainfall-triggered landslide occurs in that ~1 km cell on a day with the slider conditions. It is a model output, not a measured frequency for that hillside, and not a flood forecast. The model saturates near 1 under extreme sliders — that is what the model says, not a claim that a landslide is certain.</p>
+  <p>Inputs, in model order: Lithology, Slope, PGA, soil moisture (gwetprof), antecedent rain, rain ÷ p99. Static layers are the 30-arcsecond (~1 km) LHASA static files, clipped to 97–106°E, 5.5–20.5°N (1080 × 1800 cells). Dynamic inputs here are scenario sliders, not live IMERG/SMAP data — a live version would still need a daily feed for those three.</p>
+  <p>Tap or click any cell to see its real terrain values, p99, rain ratio and probability. Drag to pan, pinch or use +/− to zoom.</p>
+</details>
+
+<footer>
+  Model: NASA LHASA v2.1.1, XGBoost, 300 depth-2 trees, binary logistic, base score 0.1246 (used as logit). Converted to a 45 KB stripped JSON; traversal verified against the real XGBoost Booster in Python (max difference &lt; 4×10<sup>−7</sup>).
+  Static data: LHASA static.zip (Slope, Lithology, PGA, mask, p99), 2024-08-07 package. Outline: GADM v4.1 Thailand level 0, simplified to 0.01°.
+  Sources: <a href="https://github.com/nasa/LHASA">github.com/nasa/LHASA</a>.
+  This is an independent client-side build, not an official NASA product.
+</footer>
+
+<script>
+const W = 1080, H = 1800, LON0 = 97, LAT1 = 20.5;
+const canvas = document.getElementById('mapCanvas');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+const statsEl = document.getElementById('stats');
+const inspectEl = document.getElementById('inspect');
+const bgCanvas = document.createElement('canvas'); bgCanvas.width = W; bgCanvas.height = H;
+const bgCtx = bgCanvas.getContext('2d');
+const ovCanvas = document.createElement('canvas'); ovCanvas.width = W; ovCanvas.height = H;
+
+let slopeArr, lithArr, pgaArr, maskArr, p99Arr, thaiArr, outline = null, worker = null, workerReady = false, modelData = null;
+let computeTimer = null, lastParams = null, view = { s: 1, tx: 0, ty: 0 };
+
+function $(id) { return document.getElementById(id); }
+function params() {
+  return {
+    rainMm: +$('rain').value, ante: +$('ante').value, gwet: +$('gwet').value / 100,
+    override: $('override').checked, slopeOv: +$('slopeOv').value,
+    lithOv: +$('lithOv').value, pgaOv: +$('pgaOv').value,
+    minP: +$('minP').value, slopeFilter: $('slopeFilter').checked
+  };
+}
+function refreshLabels() {
+  $('rainVal').textContent = $('rain').value + ' mm';
+  $('anteVal').textContent = $('ante').value + ' mm';
+  $('gwetVal').textContent = $('gwet').value + '%';
+  $('slopeOvVal').textContent = $('slopeOv').value + '°';
+  $('lithOvVal').textContent = $('lithOv').value;
+  $('pgaOvVal').textContent = (+$('pgaOv').value).toFixed(2) + ' g';
+  $('minPVal').textContent = (+$('minP').value).toFixed(2);
+}
+function scheduleCompute() {
+  refreshLabels();
+  if (!workerReady) return;
+  statusEl.textContent = 'Computing…'; statusEl.className = '';
+  clearTimeout(computeTimer);
+  computeTimer = setTimeout(() => { lastParams = params(); worker.postMessage({ type: 'compute', params: lastParams }); }, 180);
+}
+function drawBackground() {
+  const img = bgCtx.createImageData(W, H), d = img.data;
+  for (let i = 0; i < W * H; i++) {
+    const o = i * 4;
+    if (maskArr[i]) { d[o] = 232; d[o + 1] = 232; d[o + 2] = 232; d[o + 3] = 255; }
+    else { d[o] = 207; d[o + 1] = 224; d[o + 2] = 238; d[o + 3] = 255; }
+  }
+  bgCtx.putImageData(img, 0, 0);
+}
+function drawOutline() {
+  if (!outline) return;
+  ctx.strokeStyle = 'rgba(40,40,40,0.85)'; ctx.lineWidth = 1.6; ctx.beginPath();
+  for (const poly of outline.coordinates) {
+    poly.forEach(([lon, lat], j) => {
+      const x = (lon - LON0) / 9 * W, y = (LAT1 - lat) / 15 * H;
+      if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+  }
+  ctx.stroke();
+}
+function renderOverlay(buf) {
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(bgCanvas, 0, 0);
+  const img = new ImageData(new Uint8ClampedArray(buf), W, H);
+  ovCanvas.getContext('2d').putImageData(img, 0, 0);
+  ctx.drawImage(ovCanvas, 0, 0);
+  drawOutline();
+}
+async function loadPng(path) {
+  return new Promise((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => {
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const x = c.getContext('2d'); x.drawImage(im, 0, 0);
+      resolve(x.getImageData(0, 0, W, H).data);
+    };
+    im.onerror = reject; im.src = path;
+  });
+}
+async function init() {
+  try {
+    const [slopePx, lithPx, pgaPx, maskPx, p99Px, thaiPx, model, outlineJson] = await Promise.all([
+      loadPng('layers/slope.png'), loadPng('layers/lith.png'), loadPng('layers/pga.png'),
+      loadPng('layers/mask.png'), loadPng('layers/p99.png'), loadPng('layers/thai.png'),
+      fetch('model.json').then(r => r.json()), fetch('outline.json').then(r => r.json())
+    ]);
+    const n = W * H;
+    slopeArr = new Float32Array(n); lithArr = new Float32Array(n); pgaArr = new Float32Array(n);
+    maskArr = new Uint8Array(n); p99Arr = new Float32Array(n); thaiArr = new Uint8Array(n);
+    for (let i = 0, o = 0; i < n; i++, o += 4) {
+      slopeArr[i] = ((slopePx[o] << 8) | slopePx[o + 1]) / 100;
+      lithArr[i] = lithPx[o];
+      pgaArr[i] = ((pgaPx[o] << 8) | pgaPx[o + 1]) / 10000;
+      maskArr[i] = maskPx[o] > 0 ? 1 : 0;
+      p99Arr[i] = (p99Px[o] << 8) | p99Px[o + 1];
+      thaiArr[i] = thaiPx[o] > 0 ? 1 : 0;
+    }
+    outline = outlineJson;
+    modelData = model;
+    drawBackground();
+    worker = new Worker('worker.js');
+    worker.onmessage = (e) => {
+      if (e.data.type === 'ready') { workerReady = true; statusEl.textContent = 'Ready — drag to pan, tap a cell to inspect.'; statusEl.className = 'ok'; scheduleCompute(); }
+      if (e.data.type === 'result') {
+        renderOverlay(e.data.image);
+        const s = e.data.stats;
+        statsEl.textContent = 'Thailand cells shown: ' + s.shown.toLocaleString() +
+          ' · p ≥ 0.5: ' + s.above50.toLocaleString() + ' (' + (s.shown ? (100 * s.above50 / s.shown).toFixed(1) : '0') + '%)' +
+          ' · p ≥ 0.9: ' + s.above90.toLocaleString() +
+          ' · mean p (shown): ' + s.mean.toFixed(3) + ' · max p: ' + s.max.toFixed(3);
+        statusEl.textContent = 'Ready — drag to pan, tap a cell to inspect.'; statusEl.className = 'ok';
+      }
+    };
+    worker.postMessage({ type: 'init', w: W, h: H, slope: slopeArr, lith: lithArr, pga: pgaArr, mask: maskArr, p99: p99Arr, thai: thaiArr, model });
+  } catch (err) {
+    statusEl.textContent = 'Failed to load: ' + err.message + ' (serve over http, not file://, for the worker to run)';
+  }
+}
+
+// Controls
+['rain', 'ante', 'gwet', 'slopeOv', 'lithOv', 'pgaOv', 'minP'].forEach(id => $(id).addEventListener('input', scheduleCompute));
+$('slopeFilter').addEventListener('change', scheduleCompute);
+$('override').addEventListener('change', () => {
+  const on = $('override').checked;
+  ['slopeOv', 'lithOv', 'pgaOv'].forEach(id => $(id).disabled = !on);
+  scheduleCompute();
+});
+const PRESETS = {
+  dry: { rain: 20, ante: 10, gwet: 40 },
+  phuket: { rain: 117, ante: 80, gwet: 75 },
+  monsoon: { rain: 80, ante: 150, gwet: 85 },
+  extreme: { rain: 250, ante: 250, gwet: 95 }
+};
+document.querySelectorAll('[data-preset]').forEach(btn => btn.addEventListener('click', () => {
+  const p = PRESETS[btn.dataset.preset];
+  $('rain').value = p.rain; $('ante').value = p.ante; $('gwet').value = p.gwet;
+  scheduleCompute();
+}));
+$('resetBtn').addEventListener('click', () => {
+  $('rain').value = 117; $('ante').value = 80; $('gwet').value = 75;
+  $('override').checked = false; ['slopeOv', 'lithOv', 'pgaOv'].forEach(id => $(id).disabled = true);
+  $('minP').value = 0.10; $('slopeFilter').checked = true;
+  scheduleCompute();
+});
+
+// Pan / zoom / tap inspect
+function applyView() { canvas.style.transform = 'translate(' + view.tx + 'px,' + view.ty + 'px) scale(' + view.s + ')'; }
+function zoomAt(cx, cy, factor) {
+  const r = canvas.getBoundingClientRect();
+  const nx = (cx - r.left) / r.width, ny = (cy - r.top) / r.height;
+  const ns = Math.min(6, Math.max(1, view.s * factor));
+  view.s = ns; applyView();
+  // keep the point under the cursor roughly stable by recentring via scroll? (container is overflow hidden, so just clamp)
+  void nx; void ny;
+}
+$('zoomIn').addEventListener('click', () => { view.s = Math.min(6, view.s * 1.4); applyView(); });
+$('zoomOut').addEventListener('click', () => { view.s = Math.max(1, view.s / 1.4); if (view.s === 1) { view.tx = 0; view.ty = 0; } applyView(); });
+$('zoomReset').addEventListener('click', () => { view = { s: 1, tx: 0, ty: 0 }; applyView(); });
+const wrap = $('mapWrap');
+let pointers = new Map(), dragStart = null, moved = 0, lastPinch = 0;
+wrap.addEventListener('pointerdown', (e) => { pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); dragStart = { x: e.clientX, y: e.clientY }; moved = 0; if (pointers.size === 2) { const pts = [...pointers.values()]; lastPinch = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y); } });
+wrap.addEventListener('pointermove', (e) => {
+  if (!pointers.has(e.pointerId)) return;
+  const prev = pointers.get(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  moved += Math.abs(e.clientX - prev.x) + Math.abs(e.clientY - prev.y);
+  if (pointers.size === 1 && view.s > 1) { view.tx += e.clientX - prev.x; view.ty += e.clientY - prev.y; applyView(); }
+  if (pointers.size === 2) {
+    const pts = [...pointers.values()]; const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    if (lastPinch > 0) { view.s = Math.min(6, Math.max(1, view.s * d / lastPinch)); if (view.s === 1) { view.tx = 0; view.ty = 0; } applyView(); }
+    lastPinch = d;
+  }
+});
+function endPointer(e) {
+  const wasTap = moved < 8 && pointers.size === 1;
+  pointers.delete(e.pointerId);
+  if (wasTap && slopeArr) inspectAt(e.clientX, e.clientY);
+}
+wrap.addEventListener('pointerup', endPointer);
+wrap.addEventListener('pointercancel', (e) => pointers.delete(e.pointerId));
+wrap.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.2 : 1 / 1.2); }, { passive: false });
+
+function inspectAt(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  const fx = (clientX - r.left) / r.width, fy = (clientY - r.top) / r.height;
+  if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
+  const x = Math.floor(fx * W), y = Math.floor(fy * H), i = y * W + x;
+  const lon = LON0 + (x + 0.5) / W * 9, lat = LAT1 - (y + 0.5) / H * 15;
+  const p = params();
+  const slope = p.override ? p.slopeOv : slopeArr[i];
+  const lith = p.override ? p.lithOv : lithArr[i];
+  const pga = p.override ? p.pgaOv : pgaArr[i];
+  const ratio = p.rainMm / p99Arr[i];
+  let probText = '';
+  if (modelData && maskArr[i] && thaiArr[i]) {
+    const feat = [lith, slope, pga, p.gwet, p.ante, ratio];
+    let totalW = 0;
+    const baseLogit = Math.log(modelData.base_score / (1 - modelData.base_score));
+    for (const t of modelData.trees) {
+      let node = 0;
+      while (t.l[node] !== -1) node = (feat[t.s[node]] < t.c[node]) ? t.l[node] : t.r[node];
+      totalW += t.c[node];
+    }
+    const prob = 1 / (1 + Math.exp(-(baseLogit + totalW)));
+    probText = '<br><b>Probability: ' + prob.toFixed(3) + '</b>' +
+      (prob < p.minP ? ' (below your display threshold, so not coloured)' : '');
+  }
+  inspectEl.style.display = 'block';
+  inspectEl.innerHTML = '<b>' + lat.toFixed(3) + '°N, ' + lon.toFixed(3) + '°E</b><br>' +
+    (maskArr[i] ? '' : 'Sea cell (no land model).<br>') +
+    (maskArr[i] && !thaiArr[i] ? 'Outside the Thailand outline — probability is only computed inside Thailand.<br>' : '') +
+    'Slope: ' + slope.toFixed(1) + '° · Lithology code: ' + lith + ' · PGA: ' + pga.toFixed(3) + ' g<br>' +
+    'p99: ' + p99Arr[i].toFixed(0) + ' mm · Today\'s rain: ' + p.rainMm + ' mm → ratio ' + ratio.toFixed(2) + '<br>' +
+    'Antecedent: ' + p.ante + ' mm · Soil moisture: ' + Math.round(p.gwet * 100) + '%' + probText +
+    (p.slopeFilter && slope <= 10 ? '<br><i>Hidden by the ≤10° slope filter (LHASA default).</i>' : '') +
+    (p.override ? '<br><i>Terrain override is on — slope/lithology/PGA above are slider values, not this cell\'s real values.</i>' : '');
+}
+
+refreshLabels();
+init();
+</script>
+</body>
+</html>
