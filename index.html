@@ -14,9 +14,14 @@
   header p { margin: 0; font-size: 13px; color: #cbd6e2; line-height: 1.4; }
   #status { padding: 8px 16px; font-size: 13px; background: #fff3cd; color: #664d03; }
   #status.ok { background: #d1e7dd; color: #0f5132; }
-  #map { position: relative; width: 100%; height: 72vh; min-height: 480px; }
-  #probCanvas { position: absolute; z-index: 1; pointer-events: none; opacity: 0.6; }
-  #gridCanvas { position: absolute; z-index: 2; pointer-events: none; display: none; }
+  #map { position: relative; width: 100%; height: 72vh; min-height: 480px; overflow: hidden; }
+  /* The canvas is a source bitmap for a MapLibre CanvasSource layer, not
+     a DOM overlay — it must not be positioned over the map itself. */
+  #probCanvas { display: none; }
+  #goto { display: flex; gap: 6px; padding: 8px 16px; background: #fff; border-bottom: 1px solid #ddd; align-items: center; flex-wrap: wrap; font-size: 13px; }
+  #goto input, #inspect input { width: 88px; padding: 6px; font-size: 14px; }
+  #goto button, #inspect button { padding: 6px 12px; font-size: 13px; border: 1px solid #1a2a3a; border-radius: 16px; background: #fff; cursor: pointer; }
+  #gotoMsg { color: #b00020; }
   #resetView { position: absolute; left: 10px; top: 10px; z-index: 3; padding: 8px 12px; font-size: 13px; border: 1px solid #999; border-radius: 8px; background: rgba(255,255,255,.92); cursor: pointer; }
   #scrollDownBtn { display: none; position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 3; padding: 10px 18px; font-size: 15px; font-weight: 600; border: none; border-radius: 24px; background: #1a2a3a; color: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.35); cursor: pointer; }
   #legend { padding: 8px 16px; font-size: 12px; background: #fff; border-bottom: 1px solid #ddd; }
@@ -49,15 +54,16 @@
   <p>NASA LHASA 2.1.1 XGBoost model, running entirely in your browser, over an OpenFreeMap basemap. Move the sliders — the map recomputes. No live data: rain, antecedent rain and soil moisture are scenario values you set.</p>
 </header>
 <div id="status">Loading basemap, terrain layers and model…</div>
+<div id="goto"><span>Go to cell:</span> Lat <input id="gotoLat" type="number" step="0.001" min="5.5" max="20.5" placeholder="e.g. 10.048"> Lon <input id="gotoLon" type="number" step="0.001" min="97" max="106" placeholder="e.g. 98.849"> <button id="gotoBtn">Go</button> <span id="gotoMsg"></span></div>
 <div id="map">
   <canvas id="probCanvas" width="1080" height="1800"></canvas>
-  <canvas id="gridCanvas" width="1080" height="1800"></canvas>
   <button id="resetView">Reset view</button>
   <button id="scrollDownBtn">↓ Sliders below</button>
 </div>
-<div id="legend"><span>Probability (discrete bins)</span>
-  <div class="blocks"><div style="background:#ffffcc"></div><div style="background:#ffeda0"></div><div style="background:#fed976"></div><div style="background:#feb24c"></div><div style="background:#fd8d3c"></div><div style="background:#fc4e2a"></div><div style="background:#e31a1c"></div><div style="background:#bd0026"></div><div style="background:#800026"></div></div>
-  <div class="labels"><span>0.10</span><span>0.20</span><span>0.35</span><span>0.50</span><span>0.65</span><span>0.78</span><span>0.86</span><span>0.91</span><span>0.95</span><span>1.00</span></div>
+<div id="legend"><span>Probability — colours from NASA's susceptibility legend (gradient)</span>
+  <div class="blocks" style="background:linear-gradient(90deg,#0f5fc2 0%,#6a9cd9 22%,#c2c262 44%,#c2860e 67%,#c21010 89%,#7a0a0a 100%)"><div></div></div>
+  <div class="labels"><span>0.10 Very Low</span><span>0.30 Low</span><span>0.50 Medium</span><span>0.70 High</span><span>0.90 Very High</span><span>1.00</span></div>
+  <div style="font-size:11px;color:#666;margin-top:2px;">White / transparent = no data (sea, outside Thailand, or hidden by the ≤10° slope filter). The legend colours are NASA's susceptibility colours; the probability ranges above are ours — NASA v2 does not publish a 5-level probability scale.</div>
 </div>
 <div id="stats">—</div>
 <div id="inspect"></div>
@@ -133,8 +139,9 @@
   <summary>How to read this, and what it is not</summary>
   <p>Each coloured cell is the LHASA XGBoost probability that a rainfall-triggered landslide occurs in that ~1 km cell on a day with the slider conditions. It is a model output, not a measured frequency for that hillside, and not a flood forecast. The model saturates near 1 under extreme sliders — that is what the model says, not a claim that a landslide is certain.</p>
   <p>Inputs, in model order: Lithology, Slope, PGA, soil moisture (gwetprof), antecedent rain, rain ÷ p99. Static layers are the 30-arcsecond (~1 km) LHASA static files, clipped to 97–106°E, 5.5–20.5°N (1080 × 1800 cells). Dynamic inputs here are scenario sliders, not live IMERG/SMAP data — a live version would still need a daily feed for those three.</p>
-  <p>Tap or click any cell to see its real terrain values, p99, rain ratio and probability. Drag to pan, pinch or use the +/− control to zoom. On a phone, one finger scrolls the page and two fingers move the map, and the “↓ Sliders below” button over the map jumps to the sliders.</p>
-  <p>Alignment: the data grid is equirectangular but the basemap is Web Mercator, so the overlay is warped row-by-row to Mercator latitudes before drawing — otherwise it drifts by up to ~80 px at zoom 10 and ~315 px at zoom 12. Colours are discrete ColorBrewer YlOrRd bins (0.10–0.20, 0.20–0.35, 0.35–0.50, 0.50–0.65, 0.65–0.78, 0.78–0.86, 0.86–0.91, 0.91–0.95, 0.95–1.00), finer where wet scenarios cluster, so neighbouring probabilities are actually distinguishable instead of one smooth red wash. The layer sits at 60% opacity by default so basemap labels show through; the opacity slider adjusts it.</p>
+  <p>Tap or click any cell to see its real terrain values, p99, rain ratio and probability — the tapped cell is outlined in red with a yellow fill, so you can see exactly which 1 km cell the numbers belong to. Or type a latitude/longitude in the “Go to cell” box above the map (or edit the lat/lon in the cell panel) and it zooms to that cell, outlines it the same way, and shows its values. Drag to pan, pinch or use the +/− control to zoom. On a phone, one finger scrolls the page and two fingers move the map, and the “↓ Sliders below” button over the map jumps to the sliders.</p>
+  <p>Exposure is shown only for the tapped cell, in the panel above: that cell's population and road length from NASA's exposure files, and how much of each counts toward exposure at NASA's thresholds (low p &gt; 0.1, medium p &gt; 0.5, high p &gt; 0.9). The thresholds are nested — a high cell also counts at low and medium — and there is no province or country total on this site.</p>
+  <p>Alignment: the data grid is equirectangular but the basemap is Web Mercator, so the overlay is warped row-by-row to Mercator latitudes before drawing — otherwise it drifts by up to ~80 px at zoom 10 and ~315 px at zoom 12. The probability and grid canvases are rendered as MapLibre CanvasSource raster layers inside the map (below the basemap's labels, so street names sit on top), not as DOM overlays — a DOM overlay lags the map's own transform during a pan or pinch, which made the layer look like it was resizing while moving. Colours are a gradient sampled from NASA's Global Landslide Susceptibility legend (Very Low #0f5fc2 at 0.10, Low #6a9cd9 at 0.30, Medium #c2c262 at 0.50, High #c2860e at 0.70, Very High #c21010 at 0.90, darker red at 1.00) — the colours are NASA's, the probability anchors are ours, since v2 does not publish a 5-level probability scale. The layer sits at 60% opacity by default; the opacity slider adjusts it.</p>
 </details>
 
 <footer>
@@ -150,13 +157,11 @@ const W = 1080, H = 1800, LON0 = 97, LAT1 = 20.5;
 const BOX = [[97, 5.5], [106, 20.5]];
 const probCanvas = document.getElementById('probCanvas');
 const probCtx = probCanvas.getContext('2d');
-const gridCanvas = document.getElementById('gridCanvas');
-const gridCtx = gridCanvas.getContext('2d');
 const statusEl = document.getElementById('status');
 const statsEl = document.getElementById('stats');
 const inspectEl = document.getElementById('inspect');
 
-let slopeArr, lithArr, pgaArr, maskArr, p99Arr, thaiArr, worker = null, workerReady = false, modelData = null, map = null;
+let slopeArr, lithArr, pgaArr, maskArr, p99Arr, thaiArr, popArr, roadArr, worker = null, workerReady = false, modelData = null, map = null;
 let computeTimer = null, lastParams = null, lastImage = null, rowMap = null;
 // Web Mercator warp: the data grid is equirectangular (linear in lat),
 // the basemap is Web Mercator (non-linear in lat). Without warping, a
@@ -181,24 +186,77 @@ function drawProb() {
   }
   probCtx.putImageData(new ImageData(warped, W, H), 0, 0);
 }
-function drawGrid() {
-  // Cell boundaries in the warped (Mercator) canvas: verticals at lon
-  // steps, horizontals at the Mercator row of each lat boundary.
-  const mt = merc(20.5), mb = merc(5.5);
-  gridCtx.clearRect(0, 0, W, H);
-  gridCtx.strokeStyle = 'rgba(0,0,0,0.22)';
-  gridCtx.lineWidth = 1;
-  gridCtx.beginPath();
-  for (let k = 0; k <= W; k++) { gridCtx.moveTo(k, 0); gridCtx.lineTo(k, H); }
-  for (let j = 0; j <= H; j++) {
-    const lat = 20.5 - j / H * 15;
-    const y = (mt - merc(lat)) / (mt - mb) * H;
-    gridCtx.moveTo(0, y); gridCtx.lineTo(W, y);
-  }
-  gridCtx.stroke();
-}
 function updateGridVisibility() {
-  gridCanvas.style.display = ($('gridToggle').checked && map && map.getZoom() >= 9) ? 'block' : 'none';
+  if (!map || !map.getLayer('grid-layer')) return;
+  map.setLayoutProperty('grid-layer', 'visibility', $('gridToggle').checked ? 'visible' : 'none');
+}
+// Grid lines as vector lines, not a raster canvas: raster lines are
+// blurred by texture filtering when zoomed in and can disappear against
+// dark probability colours. Vector lines stay 1 px on screen at any zoom.
+function buildGridGeoJSON() {
+  const lines = [];
+  for (let k = 0; k <= W; k++) { const lon = 97 + k * 9 / W; lines.push([[+lon.toFixed(6), 5.5], [+lon.toFixed(6), 20.5]]); }
+  for (let j = 0; j <= H; j++) { const lat = 20.5 - j * 15 / H; lines.push([[97, +lat.toFixed(6)], [106, +lat.toFixed(6)]]); }
+  return { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'MultiLineString', coordinates: lines }, properties: {} }] };
+}
+function cellEdges(lon, lat) {
+  const x = Math.floor((lon - LON0) / 9 * W), y = Math.floor((LAT1 - lat) / 15 * H);
+  if (x < 0 || x >= W || y < 0 || y >= H) return null;
+  const lon0 = 97 + x * 9 / W, lat1 = 20.5 - y * 15 / H;
+  return [[lon0, lat1], [lon0 + 9 / W, lat1], [lon0 + 9 / W, lat1 - 15 / H], [lon0, lat1 - 15 / H], [lon0, lat1]];
+}
+function highlightCell(lon, lat) {
+  if (!map || !map.getSource('highlight')) return;
+  const edges = cellEdges(lon, lat);
+  if (!edges) return;
+  map.getSource('highlight').setData({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [edges] }, properties: {} });
+}
+function goToCell(lat, lon) {
+  const msg = $('gotoMsg');
+  if (!isFinite(lat) || !isFinite(lon) || lat < 5.5 || lat > 20.5 || lon < 97 || lon > 106) {
+    msg.textContent = 'Outside the Thailand box (lat 5.5–20.5, lon 97–106).';
+    return;
+  }
+  msg.textContent = '';
+  $('gotoLat').value = lat.toFixed(3);
+  $('gotoLon').value = lon.toFixed(3);
+  if (map) map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 13), essential: true });
+  highlightCell(lon, lat);
+  inspectAt(lon, lat);
+}
+// Add the probability and grid canvases as MapLibre raster layers, below
+// the basemap's labels so street names render on top. A DOM overlay
+// positioned with project() lags the map's own CSS transform during a
+// pan/pinch, which is why the layer seemed to resize while moving — a
+// CanvasSource layer is rendered inside the map's WebGL canvas, so it
+// pans, zooms and clips with the basemap itself.
+const BOX_COORDS = [[97, 20.5], [106, 20.5], [106, 5.5], [97, 5.5]];
+let layerOpacity = 0.6;
+function addLayers() {
+  const layers = map.getStyle().layers;
+  const labelLayer = layers.find(l => l.type === 'symbol');
+  const beforeId = labelLayer ? labelLayer.id : undefined;
+  if (!map.getSource('prob')) {
+    map.addSource('prob', { type: 'canvas', canvas: probCanvas, coordinates: BOX_COORDS, animate: false });
+    map.addLayer({ id: 'prob-layer', type: 'raster', source: 'prob', paint: { 'raster-opacity': layerOpacity, 'raster-fade-duration': 0, 'raster-resampling': 'nearest' } }, beforeId);
+  }
+  if (!map.getSource('grid-geo')) {
+    map.addSource('grid-geo', { type: 'geojson', data: buildGridGeoJSON() });
+    map.addLayer({ id: 'grid-layer', type: 'line', source: 'grid-geo', minzoom: 9, paint: { 'line-color': '#000000', 'line-opacity': 0.35, 'line-width': 1 } }, beforeId);
+  }
+  if (!map.getSource('highlight')) {
+    map.addSource('highlight', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addLayer({ id: 'highlight-fill', type: 'fill', source: 'highlight', paint: { 'fill-color': '#ffff00', 'fill-opacity': 0.25 } }, beforeId);
+    map.addLayer({ id: 'highlight-line', type: 'line', source: 'highlight', paint: { 'line-color': '#ff0000', 'line-width': 3 } }, beforeId);
+  }
+  updateGridVisibility();
+}
+function refreshProbLayer() {
+  // animate:false avoids a per-frame 7.8 MB texture upload; play/pause
+  // forces exactly one texture update from the redrawn canvas.
+  if (!map) return;
+  const src = map.getSource('prob');
+  if (src && src.play && src.pause) { src.play(); src.pause(); map.triggerRepaint(); }
 }
 
 function $(id) { return document.getElementById(id); }
@@ -227,17 +285,7 @@ function scheduleCompute() {
   clearTimeout(computeTimer);
   computeTimer = setTimeout(() => { lastParams = params(); worker.postMessage({ type: 'compute', params: lastParams }); }, 180);
 }
-function syncOverlay() {
-  if (!map) return;
-  const tl = map.project([97, 20.5]), br = map.project([106, 5.5]);
-  for (const cv of [probCanvas, gridCanvas]) {
-    cv.style.left = tl.x + 'px';
-    cv.style.top = tl.y + 'px';
-    cv.style.width = (br.x - tl.x) + 'px';
-    cv.style.height = (br.y - tl.y) + 'px';
-  }
-  updateGridVisibility();
-}
+function syncOverlay() { /* replaced by CanvasSource layers (addLayers) */ }
 async function loadPng(path) {
   return new Promise((resolve, reject) => {
     const im = new Image();
@@ -271,21 +319,20 @@ async function init() {
     cooperativeGestures: true
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
-  map.on('load', () => { map.fitBounds(BOX, { padding: 20, duration: 0 }); syncOverlay(); });
-  map.on('move', syncOverlay);
-  map.on('zoom', syncOverlay);
-  map.on('resize', syncOverlay);
+  map.on('load', () => { map.fitBounds(BOX, { padding: 20, duration: 0 }); addLayers(); if (lastImage) refreshProbLayer(); });
   map.on('click', (e) => inspectAt(e.lngLat.lng, e.lngLat.lat));
   $('resetView').addEventListener('click', () => map.fitBounds(BOX, { padding: 20, duration: 500 }));
   try {
-    const [slopePx, lithPx, pgaPx, maskPx, p99Px, thaiPx, model] = await Promise.all([
+    const [slopePx, lithPx, pgaPx, maskPx, p99Px, thaiPx, popPx, roadPx, model] = await Promise.all([
       loadPng('layers/slope.png'), loadPng('layers/lith.png'), loadPng('layers/pga.png'),
       loadPng('layers/mask.png'), loadPng('layers/p99.png'), loadPng('layers/thai.png'),
+      loadPng('layers/pop.png'), loadPng('layers/road.png'),
       fetch('model.json').then(r => r.json())
     ]);
     const n = W * H;
     slopeArr = new Float32Array(n); lithArr = new Float32Array(n); pgaArr = new Float32Array(n);
     maskArr = new Uint8Array(n); p99Arr = new Float32Array(n); thaiArr = new Uint8Array(n);
+    popArr = new Uint32Array(n); roadArr = new Float32Array(n);
     for (let i = 0, o = 0; i < n; i++, o += 4) {
       slopeArr[i] = ((slopePx[o] << 8) | slopePx[o + 1]) / 100;
       lithArr[i] = lithPx[o];
@@ -293,6 +340,9 @@ async function init() {
       maskArr[i] = maskPx[o] > 0 ? 1 : 0;
       p99Arr[i] = (p99Px[o] << 8) | p99Px[o + 1];
       thaiArr[i] = thaiPx[o] > 0 ? 1 : 0;
+      // Population: 24-bit persons per cell (exact). Roads: 16-bit metres per cell.
+      popArr[i] = (popPx[o] << 16) | (popPx[o + 1] << 8) | popPx[o + 2];
+      roadArr[i] = ((roadPx[o] << 8) | roadPx[o + 1]) / 1000;
     }
     modelData = model;
     worker = new Worker('worker.js');
@@ -301,7 +351,7 @@ async function init() {
       if (e.data.type === 'result') {
         lastImage = new Uint8ClampedArray(e.data.image);
         drawProb();
-        syncOverlay();
+        refreshProbLayer();
         const s = e.data.stats;
         statsEl.textContent = 'Thailand cells shown: ' + s.shown.toLocaleString() +
           ' · p ≥ 0.5: ' + s.above50.toLocaleString() + ' (' + (s.shown ? (100 * s.above50 / s.shown).toFixed(1) : '0') + '%)' +
@@ -316,11 +366,15 @@ async function init() {
   }
 }
 
+// Go-to-cell controls (top box; Enter in either input also goes)
+$('gotoBtn').addEventListener('click', () => goToCell(parseFloat($('gotoLat').value), parseFloat($('gotoLon').value)));
+['gotoLat', 'gotoLon'].forEach(id => $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') goToCell(parseFloat($('gotoLat').value), parseFloat($('gotoLon').value)); }));
 // Controls
 ['rain', 'ante', 'gwet', 'slopeOv', 'lithOv', 'pgaOv', 'minP'].forEach(id => $(id).addEventListener('input', scheduleCompute));
 $('opacity').addEventListener('input', () => {
-  probCanvas.style.opacity = $('opacity').value;
-  $('opacityVal').textContent = Math.round(+$('opacity').value * 100) + '%';
+  layerOpacity = +$('opacity').value;
+  if (map && map.getLayer('prob-layer')) map.setPaintProperty('prob-layer', 'raster-opacity', layerOpacity);
+  $('opacityVal').textContent = Math.round(layerOpacity * 100) + '%';
 });
 $('gridToggle').addEventListener('change', updateGridVisibility);
 $('scrollDownBtn').addEventListener('click', () => {
@@ -355,7 +409,8 @@ $('resetBtn').addEventListener('click', () => {
   $('rain').value = 117; $('ante').value = 80; $('gwet').value = 75;
   $('override').checked = false; ['slopeOv', 'lithOv', 'pgaOv'].forEach(id => $(id).disabled = true);
   $('minP').value = 0.10; $('slopeFilter').checked = true;
-  $('opacity').value = 0.6; probCanvas.style.opacity = 0.6;
+  $('opacity').value = 0.6; layerOpacity = 0.6;
+  if (map && map.getLayer('prob-layer')) map.setPaintProperty('prob-layer', 'raster-opacity', 0.6);
   $('gridToggle').checked = true; updateGridVisibility();
   scheduleCompute();
 });
@@ -364,13 +419,17 @@ function inspectAt(lon, lat) {
   if (!slopeArr) return;
   const x = Math.floor((lon - LON0) / 9 * W), y = Math.floor((LAT1 - lat) / 15 * H);
   if (x < 0 || x >= W || y < 0 || y >= H) return;
+  highlightCell(lon, lat);
+  $('gotoLat').value = lat.toFixed(3);
+  $('gotoLon').value = lon.toFixed(3);
   const i = y * W + x;
   const p = params();
   const slope = p.override ? p.slopeOv : slopeArr[i];
   const lith = p.override ? p.lithOv : lithArr[i];
   const pga = p.override ? p.pgaOv : pgaArr[i];
   const ratio = p.rainMm / p99Arr[i];
-  let probText = '';
+  let probText = '', exposureText = '';
+  let probVal = null;
   if (modelData && maskArr[i] && thaiArr[i]) {
     const feat = [lith, slope, pga, p.gwet, p.ante, ratio];
     let totalW = 0;
@@ -381,22 +440,44 @@ function inspectAt(lon, lat) {
       totalW += t.c[node];
     }
     const prob = 1 / (1 + Math.exp(-(baseLogit + totalW)));
+    probVal = prob;
     probText = '<br><b>Probability: ' + prob.toFixed(3) + '</b>' +
       (prob < p.minP ? ' (below your display threshold, so not coloured)' : '');
   }
+  // Per-cell exposure (NASA expose() logic, this cell only — not a
+  // province total): the cell's population and road length count toward
+  // each threshold it exceeds. Thresholds are nested, so a high cell
+  // also counts at low and medium.
+  if (popArr && roadArr) {
+    const pop = popArr[i], roadKm = roadArr[i];
+    const fmt = (v, unit) => (v ? v.toLocaleString() + unit : '0');
+    if (probVal === null) {
+      exposureText = '<br>Population in this cell: ' + pop.toLocaleString() + ' people · Roads: ' + roadKm.toFixed(2) + ' km (NASA exposure files; no probability here, so no exposure counted).';
+    } else {
+      const low = probVal > 0.1, med = probVal > 0.5, high = probVal > 0.9;
+      exposureText = '<br>Population in this cell: ' + pop.toLocaleString() + ' people · Roads: ' + roadKm.toFixed(2) + ' km (NASA exposure files)<br>' +
+        'Exposure from this cell — low (p &gt; 0.1): ' + fmt(low ? pop : 0, ' people') + ' / ' + fmt(low ? roadKm : 0, ' km') +
+        ' · medium (p &gt; 0.5): ' + fmt(med ? pop : 0, ' people') + ' / ' + fmt(med ? roadKm : 0, ' km') +
+        ' · high (p &gt; 0.9): ' + fmt(high ? pop : 0, ' people') + ' / ' + fmt(high ? roadKm : 0, ' km');
+    }
+  }
   inspectEl.style.display = 'block';
-  inspectEl.innerHTML = '<b>' + lat.toFixed(3) + '°N, ' + lon.toFixed(3) + '°E</b><br>' +
+  inspectEl.innerHTML = 'Cell: Lat <input id="inspectLat" type="number" step="0.001"> Lon <input id="inspectLon" type="number" step="0.001"> <button id="inspectGo">Go</button><br>' +
     (maskArr[i] ? '' : 'Sea cell (no land model).<br>') +
     (maskArr[i] && !thaiArr[i] ? 'Outside the Thailand outline — probability is only computed inside Thailand.<br>' : '') +
     'Slope: ' + slope.toFixed(1) + '° · Lithology code: ' + lith + ' · PGA: ' + pga.toFixed(3) + ' g<br>' +
     'p99: ' + p99Arr[i].toFixed(0) + ' mm · Today\'s rain: ' + p.rainMm + ' mm → ratio ' + ratio.toFixed(2) + '<br>' +
-    'Antecedent: ' + p.ante + ' mm · Soil moisture: ' + Math.round(p.gwet * 100) + '%' + probText +
+    'Antecedent: ' + p.ante + ' mm · Soil moisture: ' + Math.round(p.gwet * 100) + '%' + probText + exposureText +
     (p.slopeFilter && slope <= 10 ? '<br><i>Hidden by the ≤10° slope filter (LHASA default).</i>' : '') +
     (p.override ? '<br><i>Terrain override is on — slope/lithology/PGA above are slider values, not this cell\'s real values.</i>' : '');
+  const ilat = document.getElementById('inspectLat'), ilon = document.getElementById('inspectLon');
+  if (ilat && ilon) {
+    ilat.value = lat.toFixed(3); ilon.value = lon.toFixed(3);
+    document.getElementById('inspectGo').addEventListener('click', () => goToCell(parseFloat(ilat.value), parseFloat(ilon.value)));
+  }
 }
 
 buildRowMap();
-drawGrid();
 refreshLabels();
 init();
 </script>

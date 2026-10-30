@@ -9,28 +9,38 @@ let W = 1080, H = 1800;
 let slopeArr, lithArr, pgaArr, maskArr, p99Arr, thaiArr;
 let treeOffsets, splitIdx, splitCond, leftArr, rightArr, baseLogit = 0;
 
-// Discrete probability bins: [upper edge, r, g, b]. ColorBrewer YlOrRd
-// 9-class, with finer bins where the model actually clusters in wet
-// scenarios (0.78-0.95 holds most cells; 0.95-1.00 is rare but real in
-// extreme scenarios). Discrete steps differentiate far better than a
-// smooth gradient, especially under the overlay's transparency.
-const BINS = [
-  [0.20, 255, 255, 204],
-  [0.35, 255, 237, 160],
-  [0.50, 254, 217, 118],
-  [0.65, 254, 178, 76],
-  [0.78, 253, 141, 60],
-  [0.86, 252, 78, 42],
-  [0.91, 227, 26, 28],
-  [0.95, 189, 0, 38],
-  [1.01, 128, 0, 38]
+// Gradient colour stops for probability p: [p, r, g, b]. Colours are
+// sampled exactly from NASA's Global Landslide Susceptibility legend
+// (see README): Very Low #0f5fc2, Low #6a9cd9, Medium #c2c262,
+// High #c2860e, Very High #c21010. Those legend colours belong to the
+// susceptibility map, not to v2 probability — the probability ranges
+// assigned to them here are ours, chosen so the anchors land at round
+// probabilities (0.10 / 0.30 / 0.50 / 0.70 / 0.90). The gradient is
+// extended to a darker red at 1.00 so cells above 0.90 are still
+// distinguishable from each other instead of all rendering identical.
+const STOPS = [
+  [0.10, 15, 95, 194],
+  [0.30, 106, 156, 217],
+  [0.50, 194, 194, 98],
+  [0.70, 194, 134, 14],
+  [0.90, 194, 16, 16],
+  [1.00, 122, 10, 10]
 ];
 
 function colour(p) {
-  for (let i = 0; i < BINS.length; i++) {
-    if (p < BINS[i][0]) return BINS[i].slice(1);
+  if (p <= STOPS[0][0]) return STOPS[0].slice(1);
+  for (let i = 1; i < STOPS.length; i++) {
+    if (p <= STOPS[i][0]) {
+      const a = STOPS[i - 1], b = STOPS[i];
+      const t = (p - a[0]) / (b[0] - a[0]);
+      return [
+        Math.round(a[1] + (b[1] - a[1]) * t),
+        Math.round(a[2] + (b[2] - a[2]) * t),
+        Math.round(a[3] + (b[3] - a[3]) * t)
+      ];
+    }
   }
-  return BINS[BINS.length - 1].slice(1);
+  return STOPS[STOPS.length - 1].slice(1);
 }
 
 self.onmessage = function (e) {
