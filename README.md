@@ -9,7 +9,10 @@ Live site: https://gain9999.github.io/thai-landslide/
 - Basemap: OpenFreeMap vector positron via MapLibre GL JS 4.7.1 (keyless, https://tiles.openfreemap.org/styles/positron).
 - Loads the Thailand static layers at their original 30-arcsecond (~1 km) resolution: 1080 × 1800 cells over 97–106°E, 5.5–20.5°N.
 - Runs all 300 XGBoost trees in a Web Worker for every land cell, every time a slider moves, and draws the result as a transparent canvas overlay positioned with MapLibre's `project()` on every move/zoom — so the basemap's streets, labels and borders stay visible wherever probability is not coloured.
-- Colours cells by probability (0.1 yellow → 0.9+ dark red). Cells below the display threshold, sea cells, outside-Thailand cells, and (by default) slopes ≤ 10° are left transparent, showing the basemap underneath.
+- Alignment: the data grid is equirectangular, the basemap is Web Mercator, so the overlay is warped row-by-row to Mercator latitudes before drawing. Without this it drifts ~0.8% of the box height (5 px at country zoom, ~80 px at zoom 10, ~315 px at zoom 12).
+- Colours are discrete ColorBrewer YlOrRd bins: 0.10–0.20, 0.20–0.35, 0.35–0.50, 0.50–0.65, 0.65–0.78, 0.78–0.86, 0.86–0.91, 0.91–0.95, 0.95–1.00 — finer where wet scenarios cluster (most Phuket-scenario cells sit at 0.78–0.95). Cells below the display threshold, sea cells, outside-Thailand cells, and (by default) slopes ≤ 10° are left transparent, showing the basemap underneath.
+- Display controls: probability opacity slider (default 60%, so street names show through) and 1 km grid lines, shown at zoom 9 and above.
+- Mobile: `cooperativeGestures` is on, so one finger scrolls the page and two fingers move the map, plus a “↓ Sliders below” button hovering over the map that jumps to the sliders.
 
 ## Sliders — all model inputs
 

@@ -15,10 +15,14 @@
   #status { padding: 8px 16px; font-size: 13px; background: #fff3cd; color: #664d03; }
   #status.ok { background: #d1e7dd; color: #0f5132; }
   #map { position: relative; width: 100%; height: 72vh; min-height: 480px; }
-  #probCanvas { position: absolute; z-index: 1; pointer-events: none; }
-  #resetView { position: absolute; left: 10px; top: 10px; z-index: 2; padding: 8px 12px; font-size: 13px; border: 1px solid #999; border-radius: 8px; background: rgba(255,255,255,.92); cursor: pointer; }
-  #legend { display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 12px; background: #fff; border-bottom: 1px solid #ddd; flex-wrap: wrap; }
-  #legend .bar { flex: 1; min-width: 140px; height: 12px; border-radius: 6px; background: linear-gradient(90deg, #fee08b, #fdae61, #f46d43, #d73027, #7f0000); }
+  #probCanvas { position: absolute; z-index: 1; pointer-events: none; opacity: 0.6; }
+  #gridCanvas { position: absolute; z-index: 2; pointer-events: none; display: none; }
+  #resetView { position: absolute; left: 10px; top: 10px; z-index: 3; padding: 8px 12px; font-size: 13px; border: 1px solid #999; border-radius: 8px; background: rgba(255,255,255,.92); cursor: pointer; }
+  #scrollDownBtn { display: none; position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 3; padding: 10px 18px; font-size: 15px; font-weight: 600; border: none; border-radius: 24px; background: #1a2a3a; color: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.35); cursor: pointer; }
+  #legend { padding: 8px 16px; font-size: 12px; background: #fff; border-bottom: 1px solid #ddd; }
+  #legend .blocks { display: flex; height: 14px; border-radius: 4px; overflow: hidden; }
+  #legend .blocks div { flex: 1; }
+  #legend .labels { display: flex; justify-content: space-between; font-size: 10px; color: #555; margin-top: 2px; }
   #stats { padding: 10px 16px; font-size: 13px; background: #fff; border-bottom: 1px solid #ddd; line-height: 1.5; }
   #inspect { padding: 10px 16px; font-size: 13px; background: #eef4fb; border-bottom: 1px solid #ddd; line-height: 1.6; display: none; }
   #inspect b { font-size: 15px; }
@@ -47,13 +51,18 @@
 <div id="status">Loading basemap, terrain layers and model…</div>
 <div id="map">
   <canvas id="probCanvas" width="1080" height="1800"></canvas>
+  <canvas id="gridCanvas" width="1080" height="1800"></canvas>
   <button id="resetView">Reset view</button>
+  <button id="scrollDownBtn">↓ Sliders below</button>
 </div>
-<div id="legend"><span>Probability</span><div class="bar"></div><span>0.1 &nbsp; 0.5 &nbsp; 0.9+</span></div>
+<div id="legend"><span>Probability (discrete bins)</span>
+  <div class="blocks"><div style="background:#ffffcc"></div><div style="background:#ffeda0"></div><div style="background:#fed976"></div><div style="background:#feb24c"></div><div style="background:#fd8d3c"></div><div style="background:#fc4e2a"></div><div style="background:#e31a1c"></div><div style="background:#bd0026"></div><div style="background:#800026"></div></div>
+  <div class="labels"><span>0.10</span><span>0.20</span><span>0.35</span><span>0.50</span><span>0.65</span><span>0.78</span><span>0.86</span><span>0.91</span><span>0.95</span><span>1.00</span></div>
+</div>
 <div id="stats">—</div>
 <div id="inspect"></div>
 
-<section>
+<section id="slidersSection">
   <h2>Rain &amp; moisture — scenario sliders</h2>
   <div class="ctl">
     <label>Today's rain <span id="rainVal">117 mm</span></label>
@@ -109,13 +118,23 @@
   <div class="ctl">
     <label><span><input type="checkbox" id="slopeFilter" checked> Hide slopes ≤ 10° (LHASA default)</span><span></span></label>
   </div>
+  <div class="ctl">
+    <label>Probability layer opacity <span id="opacityVal">60%</span></label>
+    <input type="range" id="opacity" min="0.2" max="1" step="0.05" value="0.6">
+    <small>Lower = street names and labels show through more.</small>
+  </div>
+  <div class="ctl">
+    <label><span><input type="checkbox" id="gridToggle" checked> Show 1 km grid lines (when zoomed in)</span><span></span></label>
+    <small>Grid lines appear at zoom 9 and above, so the country view stays clean.</small>
+  </div>
 </section>
 
 <details>
   <summary>How to read this, and what it is not</summary>
   <p>Each coloured cell is the LHASA XGBoost probability that a rainfall-triggered landslide occurs in that ~1 km cell on a day with the slider conditions. It is a model output, not a measured frequency for that hillside, and not a flood forecast. The model saturates near 1 under extreme sliders — that is what the model says, not a claim that a landslide is certain.</p>
   <p>Inputs, in model order: Lithology, Slope, PGA, soil moisture (gwetprof), antecedent rain, rain ÷ p99. Static layers are the 30-arcsecond (~1 km) LHASA static files, clipped to 97–106°E, 5.5–20.5°N (1080 × 1800 cells). Dynamic inputs here are scenario sliders, not live IMERG/SMAP data — a live version would still need a daily feed for those three.</p>
-  <p>Tap or click any cell to see its real terrain values, p99, rain ratio and probability. Drag to pan, pinch or use the +/− control to zoom.</p>
+  <p>Tap or click any cell to see its real terrain values, p99, rain ratio and probability. Drag to pan, pinch or use the +/− control to zoom. On a phone, one finger scrolls the page and two fingers move the map, and the “↓ Sliders below” button over the map jumps to the sliders.</p>
+  <p>Alignment: the data grid is equirectangular but the basemap is Web Mercator, so the overlay is warped row-by-row to Mercator latitudes before drawing — otherwise it drifts by up to ~80 px at zoom 10 and ~315 px at zoom 12. Colours are discrete ColorBrewer YlOrRd bins (0.10–0.20, 0.20–0.35, 0.35–0.50, 0.50–0.65, 0.65–0.78, 0.78–0.86, 0.86–0.91, 0.91–0.95, 0.95–1.00), finer where wet scenarios cluster, so neighbouring probabilities are actually distinguishable instead of one smooth red wash. The layer sits at 60% opacity by default so basemap labels show through; the opacity slider adjusts it.</p>
 </details>
 
 <footer>
@@ -131,12 +150,56 @@ const W = 1080, H = 1800, LON0 = 97, LAT1 = 20.5;
 const BOX = [[97, 5.5], [106, 20.5]];
 const probCanvas = document.getElementById('probCanvas');
 const probCtx = probCanvas.getContext('2d');
+const gridCanvas = document.getElementById('gridCanvas');
+const gridCtx = gridCanvas.getContext('2d');
 const statusEl = document.getElementById('status');
 const statsEl = document.getElementById('stats');
 const inspectEl = document.getElementById('inspect');
 
 let slopeArr, lithArr, pgaArr, maskArr, p99Arr, thaiArr, worker = null, workerReady = false, modelData = null, map = null;
-let computeTimer = null, lastParams = null;
+let computeTimer = null, lastParams = null, lastImage = null, rowMap = null;
+// Web Mercator warp: the data grid is equirectangular (linear in lat),
+// the basemap is Web Mercator (non-linear in lat). Without warping, a
+// linearly stretched overlay is off by ~0.8% of the box height — 5 px at
+// country zoom, ~80 px at zoom 10, ~315 px at zoom 12. Warping each
+// output row to its Mercator latitude removes that error by construction.
+function merc(lat) { return Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)); }
+function buildRowMap() {
+  const mt = merc(20.5), mb = merc(5.5);
+  rowMap = new Uint16Array(H);
+  for (let j = 0; j < H; j++) {
+    const my = mt - (j + 0.5) / H * (mt - mb);
+    const lat = (2 * Math.atan(Math.exp(my)) - Math.PI / 2) * 180 / Math.PI;
+    rowMap[j] = Math.max(0, Math.min(H - 1, Math.round((20.5 - lat) / 15 * H - 0.5)));
+  }
+}
+function drawProb() {
+  if (!lastImage) return;
+  const warped = new Uint8ClampedArray(W * H * 4);
+  for (let j = 0; j < H; j++) {
+    warped.set(lastImage.subarray(rowMap[j] * W * 4, (rowMap[j] + 1) * W * 4), j * W * 4);
+  }
+  probCtx.putImageData(new ImageData(warped, W, H), 0, 0);
+}
+function drawGrid() {
+  // Cell boundaries in the warped (Mercator) canvas: verticals at lon
+  // steps, horizontals at the Mercator row of each lat boundary.
+  const mt = merc(20.5), mb = merc(5.5);
+  gridCtx.clearRect(0, 0, W, H);
+  gridCtx.strokeStyle = 'rgba(0,0,0,0.22)';
+  gridCtx.lineWidth = 1;
+  gridCtx.beginPath();
+  for (let k = 0; k <= W; k++) { gridCtx.moveTo(k, 0); gridCtx.lineTo(k, H); }
+  for (let j = 0; j <= H; j++) {
+    const lat = 20.5 - j / H * 15;
+    const y = (mt - merc(lat)) / (mt - mb) * H;
+    gridCtx.moveTo(0, y); gridCtx.lineTo(W, y);
+  }
+  gridCtx.stroke();
+}
+function updateGridVisibility() {
+  gridCanvas.style.display = ($('gridToggle').checked && map && map.getZoom() >= 9) ? 'block' : 'none';
+}
 
 function $(id) { return document.getElementById(id); }
 function params() {
@@ -155,6 +218,7 @@ function refreshLabels() {
   $('lithOvVal').textContent = $('lithOv').value;
   $('pgaOvVal').textContent = (+$('pgaOv').value).toFixed(2) + ' g';
   $('minPVal').textContent = (+$('minP').value).toFixed(2);
+  $('opacityVal').textContent = Math.round(+$('opacity').value * 100) + '%';
 }
 function scheduleCompute() {
   refreshLabels();
@@ -166,10 +230,13 @@ function scheduleCompute() {
 function syncOverlay() {
   if (!map) return;
   const tl = map.project([97, 20.5]), br = map.project([106, 5.5]);
-  probCanvas.style.left = tl.x + 'px';
-  probCanvas.style.top = tl.y + 'px';
-  probCanvas.style.width = (br.x - tl.x) + 'px';
-  probCanvas.style.height = (br.y - tl.y) + 'px';
+  for (const cv of [probCanvas, gridCanvas]) {
+    cv.style.left = tl.x + 'px';
+    cv.style.top = tl.y + 'px';
+    cv.style.width = (br.x - tl.x) + 'px';
+    cv.style.height = (br.y - tl.y) + 'px';
+  }
+  updateGridVisibility();
 }
 async function loadPng(path) {
   return new Promise((resolve, reject) => {
@@ -197,7 +264,11 @@ async function init() {
     maxZoom: 12,
     dragRotate: false,
     touchPitch: false,
-    pitchWithRotate: false
+    pitchWithRotate: false,
+    // On touch devices, one finger scrolls the page (so sliders below
+    // are reachable) and two fingers move the map, instead of the map
+    // swallowing every swipe.
+    cooperativeGestures: true
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
   map.on('load', () => { map.fitBounds(BOX, { padding: 20, duration: 0 }); syncOverlay(); });
@@ -228,8 +299,8 @@ async function init() {
     worker.onmessage = (e) => {
       if (e.data.type === 'ready') { workerReady = true; statusEl.textContent = 'Ready — drag to pan, tap a cell to inspect.'; statusEl.className = 'ok'; scheduleCompute(); }
       if (e.data.type === 'result') {
-        const img = new ImageData(new Uint8ClampedArray(e.data.image), W, H);
-        probCtx.putImageData(img, 0, 0);
+        lastImage = new Uint8ClampedArray(e.data.image);
+        drawProb();
         syncOverlay();
         const s = e.data.stats;
         statsEl.textContent = 'Thailand cells shown: ' + s.shown.toLocaleString() +
@@ -247,6 +318,22 @@ async function init() {
 
 // Controls
 ['rain', 'ante', 'gwet', 'slopeOv', 'lithOv', 'pgaOv', 'minP'].forEach(id => $(id).addEventListener('input', scheduleCompute));
+$('opacity').addEventListener('input', () => {
+  probCanvas.style.opacity = $('opacity').value;
+  $('opacityVal').textContent = Math.round(+$('opacity').value * 100) + '%';
+});
+$('gridToggle').addEventListener('change', updateGridVisibility);
+$('scrollDownBtn').addEventListener('click', () => {
+  document.getElementById('slidersSection').scrollIntoView({ behavior: 'smooth' });
+  $('scrollDownBtn').style.display = 'none';
+});
+if (window.matchMedia('(pointer: coarse)').matches) {
+  $('scrollDownBtn').style.display = 'block';
+  window.addEventListener('scroll', () => {
+    const mr = document.getElementById('map').getBoundingClientRect();
+    if (mr.bottom < 0) $('scrollDownBtn').style.display = 'none';
+  }, { passive: true });
+}
 $('slopeFilter').addEventListener('change', scheduleCompute);
 $('override').addEventListener('change', () => {
   const on = $('override').checked;
@@ -268,6 +355,8 @@ $('resetBtn').addEventListener('click', () => {
   $('rain').value = 117; $('ante').value = 80; $('gwet').value = 75;
   $('override').checked = false; ['slopeOv', 'lithOv', 'pgaOv'].forEach(id => $(id).disabled = true);
   $('minP').value = 0.10; $('slopeFilter').checked = true;
+  $('opacity').value = 0.6; probCanvas.style.opacity = 0.6;
+  $('gridToggle').checked = true; updateGridVisibility();
   scheduleCompute();
 });
 
@@ -306,6 +395,8 @@ function inspectAt(lon, lat) {
     (p.override ? '<br><i>Terrain override is on — slope/lithology/PGA above are slider values, not this cell\'s real values.</i>' : '');
 }
 
+buildRowMap();
+drawGrid();
 refreshLabels();
 init();
 </script>
