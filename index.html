@@ -23,6 +23,20 @@
   #goto button, #inspect button { padding: 6px 12px; font-size: 13px; border: 1px solid #1a2a3a; border-radius: 16px; background: #fff; cursor: pointer; }
   #gotoMsg { color: #b00020; }
   #resetView { position: absolute; left: 10px; top: 10px; z-index: 3; padding: 8px 12px; font-size: 13px; border: 1px solid #999; border-radius: 8px; background: rgba(255,255,255,.92); cursor: pointer; }
+  /* Basemap switcher (v14): a standard stacked-layers icon as a
+     MapLibre control, top-right under the +/- buttons. Tap (not hover
+     — hover does not exist on touch) opens a small Map / Satellite
+     menu. It is a plain div control, not a ctrl-group, so the menu
+     is not clipped by the group's overflow:hidden. */
+  .basemap-ctrl { position: relative; }
+  .basemap-btn { width: 29px; height: 29px; display: flex; align-items: center; justify-content: center; background: #fff; border: none; border-radius: 4px; box-shadow: 0 0 0 2px rgba(0,0,0,.1); color: #333; cursor: pointer; padding: 0; }
+  .basemap-btn.active { background: #1a2a3a; color: #fff; }
+  .basemap-menu { display: none; position: absolute; top: calc(100% + 4px); right: 0; min-width: 150px; background: #fff; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.3); overflow: hidden; z-index: 5; }
+  .basemap-menu.open { display: block; }
+  .basemap-menu button { display: flex; justify-content: space-between; width: 100%; padding: 11px 12px; font-size: 14px; background: none; border: none; border-bottom: 1px solid #eee; cursor: pointer; text-align: left; }
+  .basemap-menu button:last-child { border-bottom: none; }
+  .basemap-menu .check { visibility: hidden; }
+  .basemap-menu button.current .check { visibility: visible; }
   #scrollDownBtn { display: none; position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(88px + env(safe-area-inset-bottom, 0px)); z-index: 3; padding: 10px 18px; font-size: 15px; font-weight: 600; border: none; border-radius: 24px; background: #1a2a3a; color: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.35); cursor: pointer; }
   #legend { padding: 8px 16px; font-size: 12px; background: #fff; border-bottom: 1px solid #ddd; }
   #legend .blocks { display: flex; height: 14px; border-radius: 4px; overflow: hidden; }
@@ -51,7 +65,7 @@
 <body>
 <header>
   <h1>Thailand landslide probability</h1>
-  <p>NASA LHASA 2.1.1 XGBoost model, running entirely in your browser, over an OpenFreeMap basemap. Move the sliders — the map recomputes. No live data: rain, antecedent rain and soil moisture are scenario values you set.</p>
+  <p>NASA LHASA 2.1.1 XGBoost model, running entirely in your browser, over an OpenFreeMap basemap (tap the layers icon, top-right, for a satellite view). Move the sliders — the map recomputes. No live data: rain, antecedent rain and soil moisture are scenario values you set.</p>
 </header>
 <div id="status">Loading basemap, terrain layers and model…</div>
 <div id="goto"><span>Go to cell:</span> Lat <input id="gotoLat" type="number" step="0.001" min="5.5" max="20.5" placeholder="e.g. 10.048"> Lon <input id="gotoLon" type="number" step="0.001" min="97" max="106" placeholder="e.g. 98.849"> <button id="gotoBtn">Go</button> <span id="gotoMsg"></span></div>
@@ -145,7 +159,7 @@
 </details>
 
 <footer>
-  Basemap: <a href="https://openfreemap.org">OpenFreeMap</a> vector positron, © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, © OpenMapTiles.
+  Basemap: <a href="https://openfreemap.org">OpenFreeMap</a> vector positron, © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, © OpenMapTiles. Satellite option: Esri World Imagery, © Esri, Maxar, Earthstar Geographics, and the GIS User Community (OpenFreeMap has no satellite style of its own).
   Model: NASA LHASA v2.1.1, XGBoost, 300 depth-2 trees, binary logistic, base score 0.1246 (used as logit). Converted to a 45 KB stripped JSON; traversal verified against the real XGBoost Booster in Python (max difference &lt; 4×10<sup>−7</sup>).
   Static data: LHASA static.zip (Slope, Lithology, PGA, mask, p99), 2024-08-07 package. Probability is computed for every land cell in the cropped box (97–106°E, 5.5–20.5°N), including neighbouring countries — the Thailand outline (GADM v4.1 level 0, simplified to 0.01°) is drawn for reference only and no longer clips the model. The stats bar counts only the cells currently on screen (it recounts on pan/zoom), not the whole box.
   Sources: <a href="https://github.com/nasa/LHASA">github.com/nasa/LHASA</a>.
@@ -415,6 +429,59 @@ function scheduleCompute() {
   computeTimer = setTimeout(() => { lastParams = params(); worker.postMessage({ type: 'compute', params: lastParams }); }, 180);
 }
 function syncOverlay() { /* replaced by CanvasSource layers (addLayers) */ }
+// Basemap switcher (v14): OpenFreeMap has no satellite style — its
+// styles are all OpenStreetMap vector data — so Satellite is Esri
+// World Imagery as a raster layer, NOT a style change. Keeping the
+// Positron style (instead of setStyle) matters: setStyle would wipe
+// the prob/grid/vector/highlight sources and layers, while adding
+// a raster layer leaves them intact. The satellite layer is inserted
+// just below prob-layer, so it covers the Positron fills but sits
+// under the probability, grid, highlight and — because those were
+// inserted before the first symbol layer — under the street-name
+// labels too, giving a labelled hybrid. Grid lines flip to white
+// on satellite, where black lines vanish against dark imagery.
+let basemapMode = 'map';
+function setBasemap(mode) {
+  basemapMode = mode;
+  if (!map) return;
+  if (!map.getSource('satellite')) {
+    map.addSource('satellite', { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, attribution: 'Imagery © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community' });
+    let beforeId;
+    if (map.getLayer('prob-layer')) beforeId = 'prob-layer';
+    else { const ls = map.getStyle().layers; beforeId = ls.length ? ls[0].id : undefined; }
+    map.addLayer({ id: 'satellite-layer', type: 'raster', source: 'satellite', paint: { 'raster-opacity': 1, 'raster-fade-duration': 0 } }, beforeId);
+  }
+  map.setLayoutProperty('satellite-layer', 'visibility', mode === 'satellite' ? 'visible' : 'none');
+  if (map.getLayer('grid-layer')) map.setPaintProperty('grid-layer', 'line-color', mode === 'satellite' ? '#ffffff' : '#000000');
+}
+class BasemapControl {
+  onAdd(map) {
+    const el = document.createElement('div');
+    el.className = 'maplibregl-ctrl basemap-ctrl';
+    const btn = document.createElement('button');
+    btn.className = 'basemap-btn'; btn.type = 'button'; btn.title = 'Change basemap'; btn.setAttribute('aria-label', 'Change basemap');
+    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 12 10 5 10-5"/><path d="m2 17 10 5 10-5"/></svg>';
+    const menu = document.createElement('div');
+    menu.className = 'basemap-menu';
+    const mkOpt = (label, mode) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.innerHTML = '<span>' + label + '</span><span class="check">✓</span>';
+      b.addEventListener('click', () => { setBasemap(mode); render(); menu.classList.remove('open'); });
+      return b;
+    };
+    const mapOpt = mkOpt('Map', 'map'), satOpt = mkOpt('Satellite', 'satellite');
+    menu.append(mapOpt, satOpt);
+    const render = () => {
+      btn.classList.toggle('active', basemapMode === 'satellite');
+      mapOpt.classList.toggle('current', basemapMode === 'map');
+      satOpt.classList.toggle('current', basemapMode === 'satellite');
+    };
+    btn.addEventListener('click', (e) => { e.stopPropagation(); menu.classList.toggle('open'); });
+    document.addEventListener('click', (e) => { if (!el.contains(e.target)) menu.classList.remove('open'); });
+    el.append(btn, menu); this._el = el; render(); return el;
+  }
+  onRemove() { if (this._el) this._el.remove(); }
+}
 async function loadPng(path) {
   return new Promise((resolve, reject) => {
     const im = new Image();
@@ -449,6 +516,7 @@ async function init() {
     cooperativeGestures: true
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
+  map.addControl(new BasemapControl(), 'top-right');
   map.on('load', () => { mapReady = true; addLayers(); if (lastImage) refreshProbLayer(); buildVectorCells(); if (!pendingUrlCell) map.fitBounds(BOX, { padding: 20, duration: 0 }); tryPendingGoTo(); });
   map.on('click', (e) => inspectAt(e.lngLat.lng, e.lngLat.lat));
   // Stats follow the screen: recount on every pan/zoom end and resize.
