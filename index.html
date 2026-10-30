@@ -56,7 +56,7 @@
 <div id="status">Loading basemap, terrain layers and model…</div>
 <div id="goto"><span>Go to cell:</span> Lat <input id="gotoLat" type="number" step="0.001" min="5.5" max="20.5" placeholder="e.g. 10.048"> Lon <input id="gotoLon" type="number" step="0.001" min="97" max="106" placeholder="e.g. 98.849"> <button id="gotoBtn">Go</button> <span id="gotoMsg"></span></div>
 <div id="map">
-  <canvas id="probCanvas" width="1080" height="3600"></canvas>
+  <canvas id="probCanvas" width="1080" height="1800"></canvas>
   <button id="resetView">Reset view</button>
   <button id="scrollDownBtn">↓ Sliders below</button>
 </div>
@@ -141,7 +141,7 @@
   <p>Inputs, in model order: Lithology, Slope, PGA, soil moisture (gwetprof), antecedent rain, rain ÷ p99. Static layers are the 30-arcsecond (~1 km) LHASA static files, clipped to 97–106°E, 5.5–20.5°N (1080 × 1800 cells). Dynamic inputs here are scenario sliders, not live IMERG/SMAP data — a live version would still need a daily feed for those three.</p>
   <p>Tap or click any cell to see its real terrain values, p99, rain ratio and probability — the tapped cell is outlined in red with a yellow fill, so you can see exactly which 1 km cell the numbers belong to. Or type a latitude/longitude in the “Go to cell” box above the map (or edit the lat/lon in the cell panel) and it zooms to that cell, outlines it the same way, and shows its values. Drag to pan, pinch or use the +/− control to zoom. On a phone, one finger scrolls the page and two fingers move the map, and the “↓ Sliders below” button over the map jumps to the sliders.</p>
   <p>Exposure is shown only for the tapped cell, in the panel above: that cell's population and road length from NASA's exposure files, and how much of each counts toward exposure at NASA's thresholds (low p &gt; 0.1, medium p &gt; 0.5, high p &gt; 0.9). The thresholds are nested — a high cell also counts at low and medium — and there is no province or country total on this site.</p>
-  <p>Alignment: the data grid is equirectangular but the basemap is Web Mercator, so the overlay is warped row-by-row to Mercator latitudes before drawing — otherwise it drifts by up to ~80 px at zoom 10 and ~315 px at zoom 12. The warped canvas is oversampled 2x in latitude (3600 rows), and the grid lines and the cell highlight are drawn at the displayed colour blocks' edges, not at the true geographic edges, so grid, highlight and colour align exactly; the displayed blocks themselves sit within a quarter cell of the true geographic cell. The probability and grid canvases are rendered as MapLibre CanvasSource raster layers inside the map (below the basemap's labels, so street names sit on top), not as DOM overlays — a DOM overlay lags the map's own transform during a pan or pinch, which made the layer look like it was resizing while moving. Colours are a gradient sampled from NASA's Global Landslide Susceptibility legend (Very Low #0f5fc2 at 0.10, Low #6a9cd9 at 0.30, Medium #c2c262 at 0.50, High #c2860e at 0.70, Very High #c21010 at 0.90, darker red at 1.00) — the colours are NASA's, the probability anchors are ours, since v2 does not publish a 5-level probability scale. The layer sits at 60% opacity by default; the opacity slider adjusts it.</p>
+  <p>Alignment: the data grid is equirectangular but the basemap is Web Mercator, so the overlay is warped row-by-row to Mercator latitudes before drawing — otherwise it drifts by up to ~80 px at zoom 10 and ~315 px at zoom 12. Grid lines and the cell highlight are drawn at the true geographic cell edges, so rows are uniform and the highlight is a full cell; the colour blocks, being a single warped raster chosen by row centre, can sit up to half a cell off those grid lines. A version that drew the grid at the displayed blocks' edges was tried and reverted: it aligned grid and colour, but made some rows half height (every ~50 rows) because a 3600-row warp gives some data rows only 1 output row instead of 2. The probability and grid canvases are rendered as MapLibre CanvasSource raster layers inside the map (below the basemap's labels, so street names sit on top), not as DOM overlays — a DOM overlay lags the map's own transform during a pan or pinch, which made the layer look like it was resizing while moving. Colours are a gradient sampled from NASA's Global Landslide Susceptibility legend (Very Low #0f5fc2 at 0.10, Low #6a9cd9 at 0.30, Medium #c2c262 at 0.50, High #c2860e at 0.70, Very High #c21010 at 0.90, darker red at 1.00) — the colours are NASA's, the probability anchors are ours, since v2 does not publish a 5-level probability scale. The layer sits at 60% opacity by default; the opacity slider adjusts it.</p>
 </details>
 
 <footer>
@@ -162,49 +162,44 @@ const statsEl = document.getElementById('stats');
 const inspectEl = document.getElementById('inspect');
 
 let slopeArr, lithArr, pgaArr, maskArr, p99Arr, thaiArr, popArr, roadArr, worker = null, workerReady = false, modelData = null, map = null;
-let computeTimer = null, lastParams = null, lastImage = null, rowMap = null, outFirst = null, outLast = null;
+let computeTimer = null, lastParams = null, lastImage = null, rowMap = null;
 // Web Mercator warp: the data grid is equirectangular (linear in lat),
 // the basemap is Web Mercator (non-linear in lat). Without warping, a
 // linearly stretched overlay is off by ~0.8% of the box height — 5 px at
 // country zoom, ~80 px at zoom 10, ~315 px at zoom 12. Warping each
 // output row to its Mercator latitude removes that error by construction.
 //
-// Why the grid used to miss the colour blocks: a warped row is chosen
-// by its CENTRE latitude, so a colour block's edges sit up to half a
-// data cell away from that cell's true geographic edges — invisible at
-// country zoom, ~49 px at zoom 12. Two fixes, both in this version:
-// (1) the warped canvas is oversampled 2x in latitude (3600 rows), so
-// a displayed block's edges are within a quarter cell of the true
-// edges; (2) the grid lines and the cell highlight are drawn at the
-// DISPLAYED block edges (the Mercator edges of the output rows that
-// carry that data row), not at the true geographic edges — so grid,
-// highlight and colour align exactly by construction, and the only
-// remaining error is the quarter-cell geographic offset of the block
-// itself, which no single raster can avoid.
-const OUT_H = 3600;
+// NOTE (v11 revert): v9 tried to make the grid follow the DISPLAYED
+// colour blocks by oversampling the warp to 3600 rows and drawing grid
+// and highlight at the displayed block edges. That made grid and colour
+// align, but it broke row heights: with 3600 output rows, most data
+// rows get 2 output rows, but 28 rows get only 1 (half height) and 28
+// get 3 (1.5x height), roughly every 50 rows — e.g. row 1058 at
+// lat 11.68, which is why a go-to cell there highlighted as a half-
+// height rectangle. So grid and highlight are back to the TRUE
+// geographic edges (uniform rows, full-height highlight), and the
+// colour layer is back to the 1800-row centre warp. The colour blocks
+// can therefore sit up to half a cell off the grid lines — that is the
+// price of a single-raster overlay, and it can only be removed by
+// rendering colour at screen resolution (tiles or a custom layer),
+// not by moving the grid.
 function merc(lat) { return Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)); }
-function invMerc(my) { return (2 * Math.atan(Math.exp(my)) - Math.PI / 2) * 180 / Math.PI; }
 function buildRowMap() {
   const mt = merc(20.5), mb = merc(5.5);
-  rowMap = new Uint16Array(OUT_H);
-  outFirst = new Int32Array(H).fill(-1);
-  outLast = new Int32Array(H).fill(-1);
-  for (let j = 0; j < OUT_H; j++) {
-    const my = mt - (j + 0.5) / OUT_H * (mt - mb);
-    const lat = invMerc(my);
-    const r = Math.max(0, Math.min(H - 1, Math.round((20.5 - lat) / 15 * H - 0.5)));
-    rowMap[j] = r;
-    if (outFirst[r] < 0) outFirst[r] = j;
-    outLast[r] = j;
+  rowMap = new Uint16Array(H);
+  for (let j = 0; j < H; j++) {
+    const my = mt - (j + 0.5) / H * (mt - mb);
+    const lat = (2 * Math.atan(Math.exp(my)) - Math.PI / 2) * 180 / Math.PI;
+    rowMap[j] = Math.max(0, Math.min(H - 1, Math.round((20.5 - lat) / 15 * H - 0.5)));
   }
 }
 function drawProb() {
   if (!lastImage) return;
-  const warped = new Uint8ClampedArray(W * OUT_H * 4);
-  for (let j = 0; j < OUT_H; j++) {
+  const warped = new Uint8ClampedArray(W * H * 4);
+  for (let j = 0; j < H; j++) {
     warped.set(lastImage.subarray(rowMap[j] * W * 4, (rowMap[j] + 1) * W * 4), j * W * 4);
   }
-  probCtx.putImageData(new ImageData(warped, W, OUT_H), 0, 0);
+  probCtx.putImageData(new ImageData(warped, W, H), 0, 0);
 }
 function updateGridVisibility() {
   if (!map || !map.getLayer('grid-layer')) return;
@@ -214,28 +209,16 @@ function updateGridVisibility() {
 // blurred by texture filtering when zoomed in and can disappear against
 // dark probability colours. Vector lines stay 1 px on screen at any zoom.
 function buildGridGeoJSON() {
-  // Vertical lines are exact (longitude is linear in Mercator).
-  // Horizontal lines follow the DISPLAYED colour-block edges (see the
-  // warp comment above), not the true geographic edges, so they sit
-  // exactly on the colour blocks they bound.
   const lines = [];
   for (let k = 0; k <= W; k++) { const lon = 97 + k * 9 / W; lines.push([[+lon.toFixed(6), 5.5], [+lon.toFixed(6), 20.5]]); }
-  const mt = merc(20.5), mb = merc(5.5);
-  for (let r = 0; r < H; r++) {
-    const lat = outFirst && outFirst[r] >= 0 ? invMerc(mt - outFirst[r] / OUT_H * (mt - mb)) : 20.5 - r * 15 / H;
-    lines.push([[97, +lat.toFixed(6)], [106, +lat.toFixed(6)]]);
-  }
-  lines.push([[97, 5.5], [106, 5.5]]);
+  for (let j = 0; j <= H; j++) { const lat = 20.5 - j * 15 / H; lines.push([[97, +lat.toFixed(6)], [106, +lat.toFixed(6)]]); }
   return { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'MultiLineString', coordinates: lines }, properties: {} }] };
 }
 function cellEdges(lon, lat) {
   const x = Math.floor((lon - LON0) / 9 * W), y = Math.floor((LAT1 - lat) / 15 * H);
   if (x < 0 || x >= W || y < 0 || y >= H) return null;
-  const lon0 = 97 + x * 9 / W;
-  const mt = merc(20.5), mb = merc(5.5);
-  const lat1 = outFirst && outFirst[y] >= 0 ? invMerc(mt - outFirst[y] / OUT_H * (mt - mb)) : 20.5 - y * 15 / H;
-  const lat0 = outLast && outLast[y] >= 0 ? invMerc(mt - (outLast[y] + 1) / OUT_H * (mt - mb)) : lat1 - 15 / H;
-  return [[lon0, lat1], [lon0 + 9 / W, lat1], [lon0 + 9 / W, lat0], [lon0, lat0], [lon0, lat1]];
+  const lon0 = 97 + x * 9 / W, lat1 = 20.5 - y * 15 / H;
+  return [[lon0, lat1], [lon0 + 9 / W, lat1], [lon0 + 9 / W, lat1 - 15 / H], [lon0, lat1 - 15 / H], [lon0, lat1]];
 }
 function highlightCell(lon, lat) {
   if (!map || !map.getSource('highlight')) return;
@@ -284,7 +267,7 @@ function addLayers() {
   updateGridVisibility();
 }
 function refreshProbLayer() {
-  // animate:false avoids a per-frame 15.5 MB texture upload; play/pause
+  // animate:false avoids a per-frame 7.8 MB texture upload; play/pause
   // forces exactly one texture update from the redrawn canvas.
   if (!map) return;
   const src = map.getSource('prob');
