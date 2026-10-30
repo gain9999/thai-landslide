@@ -139,7 +139,7 @@
   <summary>How to read this, and what it is not</summary>
   <p>Each coloured cell is the LHASA XGBoost probability that a rainfall-triggered landslide occurs in that ~1 km cell on a day with the slider conditions. It is a model output, not a measured frequency for that hillside, and not a flood forecast. The model saturates near 1 under extreme sliders — that is what the model says, not a claim that a landslide is certain.</p>
   <p>Inputs, in model order: Lithology, Slope, PGA, soil moisture (gwetprof), antecedent rain, rain ÷ p99. Static layers are the 30-arcsecond (~1 km) LHASA static files, clipped to 97–106°E, 5.5–20.5°N (1080 × 1800 cells). Dynamic inputs here are scenario sliders, not live IMERG/SMAP data — a live version would still need a daily feed for those three.</p>
-  <p>Tap or click any cell to see its real terrain values, p99, rain ratio and probability — the tapped cell is outlined in red with a yellow fill, so you can see exactly which 1 km cell the numbers belong to. Or type a latitude/longitude in the “Go to cell” box above the map (or edit the lat/lon in the cell panel) and it zooms to that cell, outlines it the same way, and shows its values. Drag to pan, pinch or use the +/− control to zoom. On a phone, one finger scrolls the page and two fingers move the map, and the “↓ Sliders below” button over the map jumps to the sliders.</p>
+  <p>Tap or click any cell to see its real terrain values, p99, rain ratio and probability — the tapped cell is outlined in red only, so it keeps its probability colour underneath and you can see exactly which 1 km cell the numbers belong to. Or type a latitude/longitude in the “Go to cell” box above the map (or edit the lat/lon in the cell panel) and it zooms to that cell, outlines it the same way, and shows its values. The go-to lat/lon and the three scenario inputs (rain, antecedent, soil moisture) can also be set from the URL, e.g. ?lat=11.680&lon=99.309&rain=117&ante=80&gwet=75, and every change to them updates the URL, so the current cell + scenario is always shareable as a link. Drag to pan, pinch or use the +/− control to zoom. On a phone, one finger scrolls the page and two fingers move the map, and the “↓ Sliders below” button over the map jumps to the sliders.</p>
   <p>Exposure is shown only for the tapped cell, in the panel above: that cell's population and road length from NASA's exposure files, and how much of each counts toward exposure at NASA's thresholds (low p &gt; 0.1, medium p &gt; 0.5, high p &gt; 0.9). The thresholds are nested — a high cell also counts at low and medium — and there is no province or country total on this site.</p>
   <p>Alignment: the data grid is equirectangular but the basemap is Web Mercator, so a single raster overlay is warped row-by-row to Mercator latitudes before drawing — otherwise it drifts by up to ~80 px at zoom 10 and ~315 px at zoom 12, and even warped it can sit up to half a cell off the grid lines. At zoom 11 and above the raster is therefore hidden and each visible cell is drawn instead as a polygon with its true lat/lon corners, coloured by its probability — polygons are projected by MapLibre itself, so colour, grid lines and highlight all align exactly and keep the original cell location. Below zoom 11 the raster is used, where a half-cell offset is only 1–6 px. A version that drew the grid at the displayed blocks' edges was tried and reverted: it aligned grid and colour, but made some rows half height (every ~50 rows) because a 3600-row warp gives some data rows only 1 output row instead of 2. The probability and grid canvases are rendered as MapLibre CanvasSource raster layers inside the map (below the basemap's labels, so street names sit on top), not as DOM overlays — a DOM overlay lags the map's own transform during a pan or pinch, which made the layer look like it was resizing while moving. Colours are a gradient sampled from NASA's Global Landslide Susceptibility legend (Very Low #0f5fc2 at 0.10, Low #6a9cd9 at 0.30, Medium #c2c262 at 0.50, High #c2860e at 0.70, Very High #c21010 at 0.90, darker red at 1.00) — the colours are NASA's, the probability anchors are ours, since v2 does not publish a 5-level probability scale. The layer sits at 60% opacity by default; the opacity slider adjusts it.</p>
 </details>
@@ -235,6 +235,7 @@ function goToCell(lat, lon) {
   msg.textContent = '';
   $('gotoLat').value = lat.toFixed(3);
   $('gotoLon').value = lon.toFixed(3);
+  syncUrl();
   if (map) map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 13), essential: true });
   highlightCell(lon, lat);
   inspectAt(lon, lat);
@@ -264,8 +265,9 @@ function addLayers() {
     map.addLayer({ id: 'prob-vector-layer', type: 'fill', source: 'prob-vector', minzoom: 11, paint: { 'fill-color': ['get', 'color'], 'fill-opacity': layerOpacity } }, beforeId);
   }
   if (!map.getSource('highlight')) {
+    // Selected cell: red border only, no fill — the cell keeps its
+    // probability colour underneath, instead of being tinted yellow.
     map.addSource('highlight', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-    map.addLayer({ id: 'highlight-fill', type: 'fill', source: 'highlight', paint: { 'fill-color': '#ffff00', 'fill-opacity': 0.25 } }, beforeId);
     map.addLayer({ id: 'highlight-line', type: 'line', source: 'highlight', paint: { 'line-color': '#ff0000', 'line-width': 3 } }, beforeId);
   }
   updateGridVisibility();
@@ -347,6 +349,45 @@ function refreshProbLayer() {
 }
 
 function $(id) { return document.getElementById(id); }
+// URL GET params (v13): ?lat=11.680&lon=99.309&rain=117&ante=80&gwet=75
+// sets the go-to inputs and the three scenario sliders on load, and
+// every change to those inputs writes them back to the URL (replaceState,
+// no reload, no extra history entries), so the current view + scenario
+// is always shareable as a link. gwet in the URL is a percent, like the
+// slider (75, not 0.75). Invalid or out-of-range values are ignored.
+let pendingUrlCell = null, mapReady = false, dataReady = false;
+function applyUrlParams() {
+  const q = new URLSearchParams(location.search);
+  const num = (keys, lo, hi) => {
+    for (const k of keys) {
+      const v = parseFloat(q.get(k));
+      if (isFinite(v) && v >= lo && v <= hi) return v;
+    }
+    return null;
+  };
+  const rain = num(['rain'], 0, 300); if (rain !== null) $('rain').value = rain;
+  const ante = num(['ante'], 0, 400); if (ante !== null) $('ante').value = ante;
+  const gwet = num(['gwet', 'moisture'], 0, 100); if (gwet !== null) $('gwet').value = gwet;
+  const lat = num(['lat'], 5.5, 20.5); if (lat !== null) $('gotoLat').value = lat;
+  const lon = num(['lon', 'lng'], 97, 106); if (lon !== null) $('gotoLon').value = lon;
+  if (lat !== null && lon !== null) pendingUrlCell = { lat, lon };
+  refreshLabels();
+}
+function syncUrl() {
+  try {
+    const qs = new URLSearchParams();
+    qs.set('rain', $('rain').value); qs.set('ante', $('ante').value); qs.set('gwet', $('gwet').value);
+    const lat = $('gotoLat').value, lon = $('gotoLon').value;
+    if (lat && isFinite(+lat)) qs.set('lat', (+lat).toFixed(3));
+    if (lon && isFinite(+lon)) qs.set('lon', (+lon).toFixed(3));
+    history.replaceState(null, '', '?' + qs.toString());
+  } catch (e) { /* file:// and other non-http origins: URL stays as-is */ }
+}
+function tryPendingGoTo() {
+  if (pendingUrlCell && mapReady && dataReady && map && map.getSource('highlight')) {
+    const c = pendingUrlCell; pendingUrlCell = null; goToCell(c.lat, c.lon);
+  }
+}
 function params() {
   return {
     rainMm: +$('rain').value, ante: +$('ante').value, gwet: +$('gwet').value / 100,
@@ -367,6 +408,7 @@ function refreshLabels() {
 }
 function scheduleCompute() {
   refreshLabels();
+  syncUrl();
   if (!workerReady) return;
   statusEl.textContent = 'Computing…'; statusEl.className = '';
   clearTimeout(computeTimer);
@@ -389,6 +431,7 @@ async function init() {
     statusEl.textContent = 'MapLibre failed to load (CDN blocked?). The basemap needs unpkg.com — check connection and reload.';
     return;
   }
+  applyUrlParams();
   map = new maplibregl.Map({
     container: 'map',
     style: 'https://tiles.openfreemap.org/styles/positron',
@@ -406,7 +449,7 @@ async function init() {
     cooperativeGestures: true
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
-  map.on('load', () => { map.fitBounds(BOX, { padding: 20, duration: 0 }); addLayers(); if (lastImage) refreshProbLayer(); buildVectorCells(); });
+  map.on('load', () => { mapReady = true; addLayers(); if (lastImage) refreshProbLayer(); buildVectorCells(); if (!pendingUrlCell) map.fitBounds(BOX, { padding: 20, duration: 0 }); tryPendingGoTo(); });
   map.on('click', (e) => inspectAt(e.lngLat.lng, e.lngLat.lat));
   // Stats follow the screen: recount on every pan/zoom end and resize.
   // Vector cells follow the screen the same way, at zoom 11+.
@@ -436,6 +479,7 @@ async function init() {
       roadArr[i] = ((roadPx[o] << 8) | roadPx[o + 1]) / 1000;
     }
     modelData = model;
+    dataReady = true; tryPendingGoTo();
     worker = new Worker('worker.js');
     // Stats are for the cells currently on screen, not the whole box:
     // after every compute, and after every pan/zoom, ask the worker to
@@ -531,6 +575,7 @@ function inspectAt(lon, lat) {
   highlightCell(lon, lat);
   $('gotoLat').value = lat.toFixed(3);
   $('gotoLon').value = lon.toFixed(3);
+  syncUrl();
   const i = y * W + x;
   const p = params();
   const slope = p.override ? p.slopeOv : slopeArr[i];
