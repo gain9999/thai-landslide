@@ -141,7 +141,7 @@
   <p>Inputs, in model order: Lithology, Slope, PGA, soil moisture (gwetprof), antecedent rain, rain ÷ p99. Static layers are the 30-arcsecond (~1 km) LHASA static files, clipped to 97–106°E, 5.5–20.5°N (1080 × 1800 cells). Dynamic inputs here are scenario sliders, not live IMERG/SMAP data — a live version would still need a daily feed for those three.</p>
   <p>Tap or click any cell to see its real terrain values, p99, rain ratio and probability — the tapped cell is outlined in red with a yellow fill, so you can see exactly which 1 km cell the numbers belong to. Or type a latitude/longitude in the “Go to cell” box above the map (or edit the lat/lon in the cell panel) and it zooms to that cell, outlines it the same way, and shows its values. Drag to pan, pinch or use the +/− control to zoom. On a phone, one finger scrolls the page and two fingers move the map, and the “↓ Sliders below” button over the map jumps to the sliders.</p>
   <p>Exposure is shown only for the tapped cell, in the panel above: that cell's population and road length from NASA's exposure files, and how much of each counts toward exposure at NASA's thresholds (low p &gt; 0.1, medium p &gt; 0.5, high p &gt; 0.9). The thresholds are nested — a high cell also counts at low and medium — and there is no province or country total on this site.</p>
-  <p>Alignment: the data grid is equirectangular but the basemap is Web Mercator, so the overlay is warped row-by-row to Mercator latitudes before drawing — otherwise it drifts by up to ~80 px at zoom 10 and ~315 px at zoom 12. Grid lines and the cell highlight are drawn at the true geographic cell edges, so rows are uniform and the highlight is a full cell; the colour blocks, being a single warped raster chosen by row centre, can sit up to half a cell off those grid lines. A version that drew the grid at the displayed blocks' edges was tried and reverted: it aligned grid and colour, but made some rows half height (every ~50 rows) because a 3600-row warp gives some data rows only 1 output row instead of 2. The probability and grid canvases are rendered as MapLibre CanvasSource raster layers inside the map (below the basemap's labels, so street names sit on top), not as DOM overlays — a DOM overlay lags the map's own transform during a pan or pinch, which made the layer look like it was resizing while moving. Colours are a gradient sampled from NASA's Global Landslide Susceptibility legend (Very Low #0f5fc2 at 0.10, Low #6a9cd9 at 0.30, Medium #c2c262 at 0.50, High #c2860e at 0.70, Very High #c21010 at 0.90, darker red at 1.00) — the colours are NASA's, the probability anchors are ours, since v2 does not publish a 5-level probability scale. The layer sits at 60% opacity by default; the opacity slider adjusts it.</p>
+  <p>Alignment: the data grid is equirectangular but the basemap is Web Mercator, so a single raster overlay is warped row-by-row to Mercator latitudes before drawing — otherwise it drifts by up to ~80 px at zoom 10 and ~315 px at zoom 12, and even warped it can sit up to half a cell off the grid lines. At zoom 11 and above the raster is therefore hidden and each visible cell is drawn instead as a polygon with its true lat/lon corners, coloured by its probability — polygons are projected by MapLibre itself, so colour, grid lines and highlight all align exactly and keep the original cell location. Below zoom 11 the raster is used, where a half-cell offset is only 1–6 px. A version that drew the grid at the displayed blocks' edges was tried and reverted: it aligned grid and colour, but made some rows half height (every ~50 rows) because a 3600-row warp gives some data rows only 1 output row instead of 2. The probability and grid canvases are rendered as MapLibre CanvasSource raster layers inside the map (below the basemap's labels, so street names sit on top), not as DOM overlays — a DOM overlay lags the map's own transform during a pan or pinch, which made the layer look like it was resizing while moving. Colours are a gradient sampled from NASA's Global Landslide Susceptibility legend (Very Low #0f5fc2 at 0.10, Low #6a9cd9 at 0.30, Medium #c2c262 at 0.50, High #c2860e at 0.70, Very High #c21010 at 0.90, darker red at 1.00) — the colours are NASA's, the probability anchors are ours, since v2 does not publish a 5-level probability scale. The layer sits at 60% opacity by default; the opacity slider adjusts it.</p>
 </details>
 
 <footer>
@@ -259,12 +259,84 @@ function addLayers() {
     map.addSource('grid-geo', { type: 'geojson', data: buildGridGeoJSON() });
     map.addLayer({ id: 'grid-layer', type: 'line', source: 'grid-geo', minzoom: 9, paint: { 'line-color': '#000000', 'line-opacity': 0.35, 'line-width': 1 } }, beforeId);
   }
+  if (!map.getSource('prob-vector')) {
+    map.addSource('prob-vector', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addLayer({ id: 'prob-vector-layer', type: 'fill', source: 'prob-vector', minzoom: 11, paint: { 'fill-color': ['get', 'color'], 'fill-opacity': layerOpacity } }, beforeId);
+  }
   if (!map.getSource('highlight')) {
     map.addSource('highlight', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     map.addLayer({ id: 'highlight-fill', type: 'fill', source: 'highlight', paint: { 'fill-color': '#ffff00', 'fill-opacity': 0.25 } }, beforeId);
     map.addLayer({ id: 'highlight-line', type: 'line', source: 'highlight', paint: { 'line-color': '#ff0000', 'line-width': 3 } }, beforeId);
   }
   updateGridVisibility();
+}
+// Vector cells (v12): at zoom 11+ the raster is hidden and each visible
+// cell is drawn as a polygon with its TRUE lat/lon corners, coloured by
+// its probability. Polygons are projected by MapLibre itself, so they
+// align with the grid lines and the highlight exactly, by construction
+// — no Mercator warp, no half-cell offset, no half-height rows. This
+// is only done at high zoom because the viewport then holds ~560 cells
+// at zoom 12 and ~2,240 at zoom 11 (trivial to rebuild on pan/zoom);
+// below zoom 11 the raster is used, where a half-cell offset is 1–6 px.
+const VECTOR_ZOOM = 11;
+const VECTOR_STOPS = [
+  [0.10, 15, 95, 194], [0.30, 106, 156, 217], [0.50, 194, 194, 98],
+  [0.70, 194, 134, 14], [0.90, 194, 16, 16], [1.00, 122, 10, 10]
+];
+function colourForProb(p) {
+  if (p <= VECTOR_STOPS[0][0]) return VECTOR_STOPS[0].slice(1);
+  for (let i = 1; i < VECTOR_STOPS.length; i++) {
+    if (p <= VECTOR_STOPS[i][0]) {
+      const a = VECTOR_STOPS[i - 1], b = VECTOR_STOPS[i];
+      const t = (p - a[0]) / (b[0] - a[0]);
+      return [Math.round(a[1] + (b[1] - a[1]) * t), Math.round(a[2] + (b[2] - a[2]) * t), Math.round(a[3] + (b[3] - a[3]) * t)];
+    }
+  }
+  return VECTOR_STOPS[VECTOR_STOPS.length - 1].slice(1);
+}
+function buildVectorCells() {
+  if (!map || !map.getSource('prob-vector') || !modelData || !maskArr) return;
+  const zoom = map.getZoom();
+  const raster = map.getLayer('prob-layer');
+  const vector = map.getLayer('prob-vector-layer');
+  if (zoom < VECTOR_ZOOM) {
+    if (raster) map.setLayoutProperty('prob-layer', 'visibility', 'visible');
+    if (vector) map.setLayoutProperty('prob-vector-layer', 'visibility', 'none');
+    return;
+  }
+  if (raster) map.setLayoutProperty('prob-layer', 'visibility', 'none');
+  if (vector) map.setLayoutProperty('prob-vector-layer', 'visibility', 'visible');
+  const p = params();
+  const b = map.getBounds();
+  const x0 = Math.max(0, Math.floor((b.getWest() - 97) / 9 * W) - 1);
+  const x1 = Math.min(W - 1, Math.ceil((b.getEast() - 97) / 9 * W) + 1);
+  const y0 = Math.max(0, Math.floor((20.5 - b.getNorth()) / 15 * H) - 1);
+  const y1 = Math.min(H - 1, Math.ceil((20.5 - b.getSouth()) / 15 * H) + 1);
+  const baseLogit = Math.log(modelData.base_score / (1 - modelData.base_score));
+  const features = [];
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const i = y * W + x;
+      if (!maskArr[i]) continue;
+      const slope = p.override ? p.slopeOv : slopeArr[i];
+      if (p.slopeFilter && slope <= 10) continue;
+      const lith = p.override ? p.lithOv : lithArr[i];
+      const pga = p.override ? p.pgaOv : pgaArr[i];
+      const feat = [lith, slope, pga, p.gwet, p.ante, p.rainMm / p99Arr[i]];
+      let totalW = 0;
+      for (const t of modelData.trees) {
+        let node = 0;
+        while (t.l[node] !== -1) node = (feat[t.s[node]] < t.c[node]) ? t.l[node] : t.r[node];
+        totalW += t.c[node];
+      }
+      const prob = 1 / (1 + Math.exp(-(baseLogit + totalW)));
+      if (prob < p.minP) continue;
+      const c = colourForProb(prob);
+      const lon0 = 97 + x * 9 / W, lat1 = 20.5 - y * 15 / H;
+      features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[lon0, lat1], [lon0 + 9 / W, lat1], [lon0 + 9 / W, lat1 - 15 / H], [lon0, lat1 - 15 / H], [lon0, lat1]]] }, properties: { color: 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')' } });
+    }
+  }
+  map.getSource('prob-vector').setData({ type: 'FeatureCollection', features });
 }
 function refreshProbLayer() {
   // animate:false avoids a per-frame 7.8 MB texture upload; play/pause
@@ -334,11 +406,12 @@ async function init() {
     cooperativeGestures: true
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
-  map.on('load', () => { map.fitBounds(BOX, { padding: 20, duration: 0 }); addLayers(); if (lastImage) refreshProbLayer(); });
+  map.on('load', () => { map.fitBounds(BOX, { padding: 20, duration: 0 }); addLayers(); if (lastImage) refreshProbLayer(); buildVectorCells(); });
   map.on('click', (e) => inspectAt(e.lngLat.lng, e.lngLat.lat));
   // Stats follow the screen: recount on every pan/zoom end and resize.
-  map.on('moveend', () => { if (window.requestViewportStats) window.requestViewportStats(); });
-  map.on('resize', () => { if (window.requestViewportStats) window.requestViewportStats(); });
+  // Vector cells follow the screen the same way, at zoom 11+.
+  map.on('moveend', () => { if (window.requestViewportStats) window.requestViewportStats(); buildVectorCells(); });
+  map.on('resize', () => { if (window.requestViewportStats) window.requestViewportStats(); buildVectorCells(); });
   $('resetView').addEventListener('click', () => map.fitBounds(BOX, { padding: 20, duration: 500 }));
   try {
     const [slopePx, lithPx, pgaPx, maskPx, p99Px, thaiPx, popPx, roadPx, model] = await Promise.all([
@@ -389,6 +462,7 @@ async function init() {
         refreshProbLayer();
         showStats(e.data.stats, 'Cells shown (whole box)');
         requestViewportStats();
+        buildVectorCells();
         statusEl.textContent = 'Ready — drag to pan, tap a cell to inspect.'; statusEl.className = 'ok';
       }
       if (e.data.type === 'viewportStats') showStats(e.data.stats, 'Cells shown on screen');
@@ -407,6 +481,7 @@ $('gotoBtn').addEventListener('click', () => goToCell(parseFloat($('gotoLat').va
 $('opacity').addEventListener('input', () => {
   layerOpacity = +$('opacity').value;
   if (map && map.getLayer('prob-layer')) map.setPaintProperty('prob-layer', 'raster-opacity', layerOpacity);
+  if (map && map.getLayer('prob-vector-layer')) map.setPaintProperty('prob-vector-layer', 'fill-opacity', layerOpacity);
   $('opacityVal').textContent = Math.round(layerOpacity * 100) + '%';
 });
 $('gridToggle').addEventListener('change', updateGridVisibility);
@@ -444,6 +519,7 @@ $('resetBtn').addEventListener('click', () => {
   $('minP').value = 0.10; $('slopeFilter').checked = true;
   $('opacity').value = 0.6; layerOpacity = 0.6;
   if (map && map.getLayer('prob-layer')) map.setPaintProperty('prob-layer', 'raster-opacity', 0.6);
+  if (map && map.getLayer('prob-vector-layer')) map.setPaintProperty('prob-vector-layer', 'fill-opacity', 0.6);
   $('gridToggle').checked = true; updateGridVisibility();
   scheduleCompute();
 });
