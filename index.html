@@ -65,7 +65,7 @@
 <body>
 <header>
   <h1>Thailand landslide probability</h1>
-  <p>NASA LHASA 2.1.1 XGBoost model, running entirely in your browser, over an OpenFreeMap basemap (tap the layers icon, top-right, for a satellite view). Move the sliders — the map recomputes. No live data: rain, antecedent rain and soil moisture are scenario values you set.</p>
+  <p>NASA LHASA 2.1.1 XGBoost model, running entirely in your browser, over an OpenFreeMap basemap (tap the layers icon, top-right, for satellite or the v1 susceptibility map). Move the sliders — the map recomputes. No live data: rain, antecedent rain and soil moisture are scenario values you set.</p>
 </header>
 <div id="status">Loading basemap, terrain layers and model…</div>
 <div id="goto"><span>Go to cell:</span> Lat <input id="gotoLat" type="number" step="0.001" min="5.5" max="20.5" placeholder="e.g. 10.048"> Lon <input id="gotoLon" type="number" step="0.001" min="97" max="106" placeholder="e.g. 98.849"> <button id="gotoBtn">Go</button> <span id="gotoMsg"></span></div>
@@ -74,10 +74,17 @@
   <button id="resetView">Reset view</button>
   <button id="scrollDownBtn">↓ Sliders below</button>
 </div>
-<div id="legend"><span>Probability — colours from NASA's susceptibility legend (gradient)</span>
-  <div class="blocks" style="background:linear-gradient(90deg,#0f5fc2 0%,#6a9cd9 22%,#c2c262 44%,#c2860e 67%,#c21010 89%,#7a0a0a 100%)"><div></div></div>
-  <div class="labels"><span>0.10 Very Low</span><span>0.30 Low</span><span>0.50 Medium</span><span>0.70 High</span><span>0.90 Very High</span><span>1.00</span></div>
-  <div style="font-size:11px;color:#666;margin-top:2px;">White / transparent = no data (sea, outside Thailand, or hidden by the ≤10° slope filter). The legend colours are NASA's susceptibility colours; the probability ranges above are ours — NASA v2 does not publish a 5-level probability scale.</div>
+<div id="legend"><span id="legendTitle">Probability — colours from NASA's susceptibility legend (gradient)</span>
+  <div id="probLegend">
+    <div class="blocks" style="background:linear-gradient(90deg,#0f5fc2 0%,#6a9cd9 22%,#c2c262 44%,#c2860e 67%,#c21010 89%,#7a0a0a 100%)"><div></div></div>
+    <div class="labels"><span>0.10 Very Low</span><span>0.30 Low</span><span>0.50 Medium</span><span>0.70 High</span><span>0.90 Very High</span><span>1.00</span></div>
+    <div style="font-size:11px;color:#666;margin-top:2px;">White / transparent = no data (sea, outside Thailand, or hidden by the ≤10° slope filter). The legend colours are NASA's susceptibility colours; the probability ranges above are ours — NASA v2 does not publish a 5-level probability scale.</div>
+  </div>
+  <div id="suscLegend" style="display:none">
+    <div class="blocks"><div style="background:#0f5fc2"></div><div style="background:#6a9cd9"></div><div style="background:#c2c262"></div><div style="background:#c2860e"></div><div style="background:#c21010"></div></div>
+    <div class="labels"><span>1 Very Low</span><span>2 Low</span><span>3 Medium</span><span>4 High</span><span>5 Very High</span></div>
+    <div style="font-size:11px;color:#666;margin-top:2px;">Static terrain classes from NASA's v1 susceptibility map (Stanley &amp; Kirschbaum 2017) — where landslides can happen, not a probability, and no rain input affects it. Transparent = no class (sea). This is a separate layer, not an input to the v2 model.</div>
+  </div>
 </div>
 <div id="stats">—</div>
 <div id="inspect"></div>
@@ -159,7 +166,7 @@
 </details>
 
 <footer>
-  Basemap: <a href="https://openfreemap.org">OpenFreeMap</a> vector positron, © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, © OpenMapTiles. Satellite option: Esri World Imagery, © Esri, Maxar, Earthstar Geographics, and the GIS User Community (OpenFreeMap has no satellite style of its own).
+  Basemap: <a href="https://openfreemap.org">OpenFreeMap</a> vector positron, © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, © OpenMapTiles. Satellite option: Esri World Imagery, © Esri, Maxar, Earthstar Geographics, and the GIS User Community (OpenFreeMap has no satellite style of its own). Susceptibility option: NASA LHASA v1 global landslide susceptibility map (Stanley &amp; Kirschbaum 2017), classes 1–5, shown as a separate layer — not an input to the v2 model.
   Model: NASA LHASA v2.1.1, XGBoost, 300 depth-2 trees, binary logistic, base score 0.1246 (used as logit). Converted to a 45 KB stripped JSON; traversal verified against the real XGBoost Booster in Python (max difference &lt; 4×10<sup>−7</sup>).
   Static data: LHASA static.zip (Slope, Lithology, PGA, mask, p99), 2024-08-07 package. Probability is computed for every land cell in the cropped box (97–106°E, 5.5–20.5°N), including neighbouring countries — the Thailand outline (GADM v4.1 level 0, simplified to 0.01°) is drawn for reference only and no longer clips the model. The stats bar counts only the cells currently on screen (it recounts on pan/zoom), not the whole box.
   Sources: <a href="https://github.com/nasa/LHASA">github.com/nasa/LHASA</a>.
@@ -175,7 +182,7 @@ const statusEl = document.getElementById('status');
 const statsEl = document.getElementById('stats');
 const inspectEl = document.getElementById('inspect');
 
-let slopeArr, lithArr, pgaArr, maskArr, p99Arr, thaiArr, popArr, roadArr, worker = null, workerReady = false, modelData = null, map = null;
+let slopeArr, lithArr, pgaArr, maskArr, p99Arr, thaiArr, popArr, roadArr, suscArr = null, suscCanvas = null, worker = null, workerReady = false, modelData = null, map = null;
 let computeTimer = null, lastParams = null, lastImage = null, rowMap = null;
 // Web Mercator warp: the data grid is equirectangular (linear in lat),
 // the basemap is Web Mercator (non-linear in lat). Without warping, a
@@ -312,6 +319,7 @@ function colourForProb(p) {
 }
 function buildVectorCells() {
   if (!map || !map.getSource('prob-vector') || !modelData || !maskArr) return;
+  if (viewMode === 'susc') { updateOverlayVisibility(); return; }
   const zoom = map.getZoom();
   const raster = map.getLayer('prob-layer');
   const vector = map.getLayer('prob-vector-layer');
@@ -440,10 +448,37 @@ function syncOverlay() { /* replaced by CanvasSource layers (addLayers) */ }
 // inserted before the first symbol layer — under the street-name
 // labels too, giving a labelled hybrid. Grid lines flip to white
 // on satellite, where black lines vanish against dark imagery.
-let basemapMode = 'map';
-function setBasemap(mode) {
-  basemapMode = mode;
+// View switcher (v14 + v15): one radio list in the layers menu —
+// Map (Positron + v2 probability), Satellite (Esri + v2 probability),
+// Susceptibility v1 (Positron + the static 1–5 susceptibility layer,
+// probability hidden). Susceptibility is a separate layer, never a
+// v2 model input, so switching to it also swaps the colourbar
+// (legend) from the probability gradient to the 5 discrete classes,
+// disables the scenario sliders (they cannot affect a static map),
+// and swaps the stats bar to class counts on screen.
+const SUSC_COLORS = { 1: [15, 95, 194], 2: [106, 156, 217], 3: [194, 194, 98], 4: [194, 134, 14], 5: [194, 16, 16] };
+const SUSC_LABELS = { 1: 'Very Low', 2: 'Low', 3: 'Medium', 4: 'High', 5: 'Very High' };
+let viewMode = 'map';
+let updateLayersMenu = null;
+function updateOverlayVisibility() {
   if (!map) return;
+  const zoom = map.getZoom(), prob = viewMode !== 'susc';
+  if (map.getLayer('prob-layer')) map.setLayoutProperty('prob-layer', 'visibility', prob && zoom < VECTOR_ZOOM ? 'visible' : 'none');
+  if (map.getLayer('prob-vector-layer')) map.setLayoutProperty('prob-vector-layer', 'visibility', prob && zoom >= VECTOR_ZOOM ? 'visible' : 'none');
+  if (map.getLayer('susc-layer')) map.setLayoutProperty('susc-layer', 'visibility', !prob && zoom < VECTOR_ZOOM ? 'visible' : 'none');
+  if (map.getLayer('susc-vector-layer')) map.setLayoutProperty('susc-vector-layer', 'visibility', !prob && zoom >= VECTOR_ZOOM ? 'visible' : 'none');
+  if (map.getLayer('grid-layer')) map.setPaintProperty('grid-layer', 'line-color', viewMode === 'satellite' ? '#ffffff' : '#000000');
+}
+function setViewMode(mode) {
+  viewMode = mode;
+  const susc = mode === 'susc';
+  $('probLegend').style.display = susc ? 'none' : 'block';
+  $('suscLegend').style.display = susc ? 'block' : 'none';
+  $('legendTitle').textContent = susc ? 'Susceptibility (v1) — static terrain classes' : "Probability — colours from NASA's susceptibility legend (gradient)";
+  // Scenario inputs cannot affect a static map; keep opacity + grid live.
+  ['rain', 'ante', 'gwet', 'slopeOv', 'lithOv', 'pgaOv', 'minP', 'slopeFilter', 'override'].forEach(id => $(id).disabled = susc);
+  document.querySelectorAll('[data-preset]').forEach(b => b.disabled = susc);
+  if (!map) { if (updateLayersMenu) updateLayersMenu(); return; }
   if (!map.getSource('satellite')) {
     map.addSource('satellite', { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, attribution: 'Imagery © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community' });
     let beforeId;
@@ -452,35 +487,99 @@ function setBasemap(mode) {
     map.addLayer({ id: 'satellite-layer', type: 'raster', source: 'satellite', paint: { 'raster-opacity': 1, 'raster-fade-duration': 0 } }, beforeId);
   }
   map.setLayoutProperty('satellite-layer', 'visibility', mode === 'satellite' ? 'visible' : 'none');
-  if (map.getLayer('grid-layer')) map.setPaintProperty('grid-layer', 'line-color', mode === 'satellite' ? '#ffffff' : '#000000');
+  updateOverlayVisibility();
+  buildVectorCells(); buildSuscVectorCells();
+  if (susc) showSuscStats(); else if (window.requestViewportStats) window.requestViewportStats();
+  if (updateLayersMenu) updateLayersMenu();
+}
+function drawSusc() {
+  if (!suscCanvas || !suscArr) return;
+  const ctx = suscCanvas.getContext('2d');
+  const img = ctx.createImageData(W, H);
+  for (let i = 0, o = 0; i < W * H; i++, o += 4) {
+    const c = suscArr[i];
+    if (c > 0) { img.data[o] = SUSC_COLORS[c][0]; img.data[o + 1] = SUSC_COLORS[c][1]; img.data[o + 2] = SUSC_COLORS[c][2]; img.data[o + 3] = 255; }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+function refreshSuscLayer() {
+  if (!map) return;
+  const src = map.getSource('susc');
+  if (src && src.play && src.pause) { src.play(); src.pause(); map.triggerRepaint(); }
+}
+function addSuscLayers() {
+  if (!map || !mapReady || !suscCanvas || map.getSource('susc')) return;
+  const layers = map.getStyle().layers;
+  const labelLayer = layers.find(l => l.type === 'symbol');
+  const beforeId = labelLayer ? labelLayer.id : undefined;
+  map.addSource('susc', { type: 'canvas', canvas: suscCanvas, coordinates: BOX_COORDS, animate: false });
+  map.addLayer({ id: 'susc-layer', type: 'raster', source: 'susc', paint: { 'raster-opacity': layerOpacity, 'raster-fade-duration': 0, 'raster-resampling': 'nearest' } }, beforeId);
+  map.addSource('susc-vector', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({ id: 'susc-vector-layer', type: 'fill', source: 'susc-vector', minzoom: 11, paint: { 'fill-color': ['get', 'color'], 'fill-opacity': layerOpacity } }, beforeId);
+  updateOverlayVisibility();
+}
+function buildSuscVectorCells() {
+  if (!map || !map.getSource('susc-vector') || !suscArr) return;
+  updateOverlayVisibility();
+  if (viewMode !== 'susc' || map.getZoom() < VECTOR_ZOOM) return;
+  const b = map.getBounds();
+  const x0 = Math.max(0, Math.floor((b.getWest() - 97) / 9 * W) - 1);
+  const x1 = Math.min(W - 1, Math.ceil((b.getEast() - 97) / 9 * W) + 1);
+  const y0 = Math.max(0, Math.floor((20.5 - b.getNorth()) / 15 * H) - 1);
+  const y1 = Math.min(H - 1, Math.ceil((20.5 - b.getSouth()) / 15 * H) + 1);
+  const features = [];
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const i = y * W + x, c = suscArr[i];
+      if (!c) continue;
+      const rgb = SUSC_COLORS[c];
+      const lon0 = 97 + x * 9 / W, lat1 = 20.5 - y * 15 / H;
+      features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[lon0, lat1], [lon0 + 9 / W, lat1], [lon0 + 9 / W, lat1 - 15 / H], [lon0, lat1 - 15 / H], [lon0, lat1]]] }, properties: { color: 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')' } });
+    }
+  }
+  map.getSource('susc-vector').setData({ type: 'FeatureCollection', features });
+}
+function showSuscStats() {
+  if (!map || !suscArr) return;
+  const b = map.getBounds();
+  const x0 = Math.max(0, Math.floor((b.getWest() - 97) / 9 * W));
+  const x1 = Math.min(W - 1, Math.ceil((b.getEast() - 97) / 9 * W));
+  const y0 = Math.max(0, Math.floor((20.5 - b.getNorth()) / 15 * H));
+  const y1 = Math.min(H - 1, Math.ceil((20.5 - b.getSouth()) / 15 * H));
+  const counts = [0, 0, 0, 0, 0, 0];
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) counts[suscArr[y * W + x]]++;
+  const total = counts.slice(1).reduce((a, v) => a + v, 0);
+  $('stats').textContent = 'Susceptibility shown on screen: ' + [1, 2, 3, 4, 5].map(c => c + ' ' + SUSC_LABELS[c] + ': ' + counts[c].toLocaleString()).join(' · ') + ' · total classed: ' + total.toLocaleString();
 }
 class BasemapControl {
   onAdd(map) {
     const el = document.createElement('div');
     el.className = 'maplibregl-ctrl basemap-ctrl';
     const btn = document.createElement('button');
-    btn.className = 'basemap-btn'; btn.type = 'button'; btn.title = 'Change basemap'; btn.setAttribute('aria-label', 'Change basemap');
+    btn.className = 'basemap-btn'; btn.type = 'button'; btn.title = 'Change layers'; btn.setAttribute('aria-label', 'Change layers');
     btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 12 10 5 10-5"/><path d="m2 17 10 5 10-5"/></svg>';
     const menu = document.createElement('div');
     menu.className = 'basemap-menu';
     const mkOpt = (label, mode) => {
       const b = document.createElement('button');
       b.type = 'button'; b.innerHTML = '<span>' + label + '</span><span class="check">✓</span>';
-      b.addEventListener('click', () => { setBasemap(mode); render(); menu.classList.remove('open'); });
+      b.addEventListener('click', () => { setViewMode(mode); menu.classList.remove('open'); });
       return b;
     };
-    const mapOpt = mkOpt('Map', 'map'), satOpt = mkOpt('Satellite', 'satellite');
-    menu.append(mapOpt, satOpt);
+    const mapOpt = mkOpt('Map', 'map'), satOpt = mkOpt('Satellite', 'satellite'), suscOpt = mkOpt('Susceptibility (v1)', 'susc');
+    menu.append(mapOpt, satOpt, suscOpt);
     const render = () => {
-      btn.classList.toggle('active', basemapMode === 'satellite');
-      mapOpt.classList.toggle('current', basemapMode === 'map');
-      satOpt.classList.toggle('current', basemapMode === 'satellite');
+      btn.classList.toggle('active', viewMode !== 'map');
+      mapOpt.classList.toggle('current', viewMode === 'map');
+      satOpt.classList.toggle('current', viewMode === 'satellite');
+      suscOpt.classList.toggle('current', viewMode === 'susc');
     };
+    updateLayersMenu = render;
     btn.addEventListener('click', (e) => { e.stopPropagation(); menu.classList.toggle('open'); });
     document.addEventListener('click', (e) => { if (!el.contains(e.target)) menu.classList.remove('open'); });
     el.append(btn, menu); this._el = el; render(); return el;
   }
-  onRemove() { if (this._el) this._el.remove(); }
+  onRemove() { if (this._el) this._el.remove(); updateLayersMenu = null; }
 }
 async function loadPng(path) {
   return new Promise((resolve, reject) => {
@@ -517,24 +616,24 @@ async function init() {
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
   map.addControl(new BasemapControl(), 'top-right');
-  map.on('load', () => { mapReady = true; addLayers(); if (lastImage) refreshProbLayer(); buildVectorCells(); if (!pendingUrlCell) map.fitBounds(BOX, { padding: 20, duration: 0 }); tryPendingGoTo(); });
+  map.on('load', () => { mapReady = true; addLayers(); addSuscLayers(); if (lastImage) refreshProbLayer(); buildVectorCells(); buildSuscVectorCells(); if (!pendingUrlCell) map.fitBounds(BOX, { padding: 20, duration: 0 }); tryPendingGoTo(); });
   map.on('click', (e) => inspectAt(e.lngLat.lng, e.lngLat.lat));
   // Stats follow the screen: recount on every pan/zoom end and resize.
   // Vector cells follow the screen the same way, at zoom 11+.
-  map.on('moveend', () => { if (window.requestViewportStats) window.requestViewportStats(); buildVectorCells(); });
-  map.on('resize', () => { if (window.requestViewportStats) window.requestViewportStats(); buildVectorCells(); });
+  map.on('moveend', () => { if (viewMode === 'susc') showSuscStats(); else if (window.requestViewportStats) window.requestViewportStats(); buildVectorCells(); buildSuscVectorCells(); });
+  map.on('resize', () => { if (viewMode === 'susc') showSuscStats(); else if (window.requestViewportStats) window.requestViewportStats(); buildVectorCells(); buildSuscVectorCells(); });
   $('resetView').addEventListener('click', () => map.fitBounds(BOX, { padding: 20, duration: 500 }));
   try {
-    const [slopePx, lithPx, pgaPx, maskPx, p99Px, thaiPx, popPx, roadPx, model] = await Promise.all([
+    const [slopePx, lithPx, pgaPx, maskPx, p99Px, thaiPx, popPx, roadPx, suscPx, model] = await Promise.all([
       loadPng('layers/slope.png'), loadPng('layers/lith.png'), loadPng('layers/pga.png'),
       loadPng('layers/mask.png'), loadPng('layers/p99.png'), loadPng('layers/thai.png'),
-      loadPng('layers/pop.png'), loadPng('layers/road.png'),
+      loadPng('layers/pop.png'), loadPng('layers/road.png'), loadPng('layers/susc.png'),
       fetch('model.json').then(r => r.json())
     ]);
     const n = W * H;
     slopeArr = new Float32Array(n); lithArr = new Float32Array(n); pgaArr = new Float32Array(n);
     maskArr = new Uint8Array(n); p99Arr = new Float32Array(n); thaiArr = new Uint8Array(n);
-    popArr = new Uint32Array(n); roadArr = new Float32Array(n);
+    popArr = new Uint32Array(n); roadArr = new Float32Array(n); suscArr = new Uint8Array(n);
     for (let i = 0, o = 0; i < n; i++, o += 4) {
       slopeArr[i] = ((slopePx[o] << 8) | slopePx[o + 1]) / 100;
       lithArr[i] = lithPx[o];
@@ -545,7 +644,10 @@ async function init() {
       // Population: 24-bit persons per cell (exact). Roads: 16-bit metres per cell.
       popArr[i] = (popPx[o] << 16) | (popPx[o + 1] << 8) | popPx[o + 2];
       roadArr[i] = ((roadPx[o] << 8) | roadPx[o + 1]) / 1000;
+      suscArr[i] = suscPx[o];
     }
+    suscCanvas = document.createElement('canvas'); suscCanvas.width = W; suscCanvas.height = H;
+    drawSusc(); addSuscLayers();
     modelData = model;
     dataReady = true; tryPendingGoTo();
     worker = new Worker('worker.js');
@@ -594,6 +696,8 @@ $('opacity').addEventListener('input', () => {
   layerOpacity = +$('opacity').value;
   if (map && map.getLayer('prob-layer')) map.setPaintProperty('prob-layer', 'raster-opacity', layerOpacity);
   if (map && map.getLayer('prob-vector-layer')) map.setPaintProperty('prob-vector-layer', 'fill-opacity', layerOpacity);
+  if (map && map.getLayer('susc-layer')) map.setPaintProperty('susc-layer', 'raster-opacity', layerOpacity);
+  if (map && map.getLayer('susc-vector-layer')) map.setPaintProperty('susc-vector-layer', 'fill-opacity', layerOpacity);
   $('opacityVal').textContent = Math.round(layerOpacity * 100) + '%';
 });
 $('gridToggle').addEventListener('change', updateGridVisibility);
@@ -626,12 +730,15 @@ document.querySelectorAll('[data-preset]').forEach(btn => btn.addEventListener('
   scheduleCompute();
 }));
 $('resetBtn').addEventListener('click', () => {
+  if (viewMode === 'susc') setViewMode('map');
   $('rain').value = 117; $('ante').value = 80; $('gwet').value = 75;
   $('override').checked = false; ['slopeOv', 'lithOv', 'pgaOv'].forEach(id => $(id).disabled = true);
   $('minP').value = 0.10; $('slopeFilter').checked = true;
   $('opacity').value = 0.6; layerOpacity = 0.6;
   if (map && map.getLayer('prob-layer')) map.setPaintProperty('prob-layer', 'raster-opacity', 0.6);
   if (map && map.getLayer('prob-vector-layer')) map.setPaintProperty('prob-vector-layer', 'fill-opacity', 0.6);
+  if (map && map.getLayer('susc-layer')) map.setPaintProperty('susc-layer', 'raster-opacity', 0.6);
+  if (map && map.getLayer('susc-vector-layer')) map.setPaintProperty('susc-vector-layer', 'fill-opacity', 0.6);
   $('gridToggle').checked = true; updateGridVisibility();
   scheduleCompute();
 });
@@ -650,6 +757,20 @@ function inspectAt(lon, lat) {
   const lith = p.override ? p.lithOv : lithArr[i];
   const pga = p.override ? p.pgaOv : pgaArr[i];
   const ratio = p.rainMm / p99Arr[i];
+  if (viewMode === 'susc' && suscArr) {
+    const c = suscArr[i];
+    inspectEl.style.display = 'block';
+    inspectEl.innerHTML = 'Cell: Lat <input id="inspectLat" type="number" step="0.001"> Lon <input id="inspectLon" type="number" step="0.001"> <button id="inspectGo">Go</button><br>' +
+      'Slope: ' + slope.toFixed(1) + '° · Lithology code: ' + lith + ' · PGA: ' + pga.toFixed(3) + ' g<br>' +
+      (c ? '<b>Susceptibility (v1): ' + c + ' — ' + SUSC_LABELS[c] + '</b> (static terrain class; rain and moisture sliders do not affect it).' : 'No susceptibility class (sea).') +
+      '<br>p99: ' + p99Arr[i].toFixed(0) + ' mm';
+    const ilat = document.getElementById('inspectLat'), ilon = document.getElementById('inspectLon');
+    if (ilat && ilon) {
+      ilat.value = lat.toFixed(3); ilon.value = lon.toFixed(3);
+      document.getElementById('inspectGo').addEventListener('click', () => goToCell(parseFloat(ilat.value), parseFloat(ilon.value)));
+    }
+    return;
+  }
   let probText = '', exposureText = '';
   let probVal = null;
   if (modelData && maskArr[i]) {
