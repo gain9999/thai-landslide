@@ -495,7 +495,7 @@ function setViewMode(mode) {
 function drawSusc() {
   if (!suscCanvas || !suscArr) return;
   const ctx = suscCanvas.getContext('2d');
-  const img = ctx.createImageData(W, H);
+  const base = new Uint8ClampedArray(W * H * 4);
   // Guard (v15.1): a class value outside 1–5 must never crash the
   // whole load — Safari reported SUSC_COLORS[c] undefined on load,
   // which aborted init before the worker even started, killing the
@@ -505,11 +505,24 @@ function drawSusc() {
   for (let i = 0, o = 0; i < W * H; i++, o += 4) {
     const c = suscArr[i];
     const col = SUSC_COLORS[c];
-    if (c > 0 && col) { img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255; }
+    if (c > 0 && col) { base[o] = col[0]; base[o + 1] = col[1]; base[o + 2] = col[2]; base[o + 3] = 255; }
     else if (c > 0) { if (bad === 0) firstBad = { i, c }; bad++; }
   }
   if (bad) console.warn('susc: ' + bad + ' cells with out-of-range class, first:', firstBad);
-  ctx.putImageData(img, 0, 0);
+  // Mercator warp (v15.2, same as drawProb): the data grid is
+  // equirectangular but the basemap is Web Mercator, and a
+  // CanvasSource quad is interpolated linearly in Mercator. Without
+  // warping, a row at true lat 13.5° appears at 13.615° — 12.8 km /
+  // 13.8 cells too far north — so at low zoom a whole coastal strip
+  // (e.g. Samut Prakan, ~13 km wide) showed as sea while zoomed-in
+  // vector cells (exact) covered it fine. Warping the rows first
+  // leaves at most half a cell of error, like the probability layer.
+  if (!rowMap) { ctx.putImageData(new ImageData(base, W, H), 0, 0); return; }
+  const warped = new Uint8ClampedArray(W * H * 4);
+  for (let j = 0; j < H; j++) {
+    warped.set(base.subarray(rowMap[j] * W * 4, (rowMap[j] + 1) * W * 4), j * W * 4);
+  }
+  ctx.putImageData(new ImageData(warped, W, H), 0, 0);
 }
 function refreshSuscLayer() {
   if (!map) return;
